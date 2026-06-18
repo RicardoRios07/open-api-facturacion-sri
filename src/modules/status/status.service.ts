@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { TemplateService } from '../template/template.service';
@@ -13,23 +12,18 @@ export interface StatusResponse {
     directories: Record<string, boolean>;
     fileCount: Record<string, number>;
     templates: string[];
-    config: {
-      carboneApi: string;
-      publicUrl: string;
-      port: number;
-    };
+    // STATUS-04: No exponer URLs internas ni config sensible en endpoint público
   };
 }
 
 @Injectable()
 export class StatusService {
-  constructor(
-    private configService: ConfigService,
-    private templateService: TemplateService,
-  ) {}
+  constructor(private templateService: TemplateService) {}
 
   /**
    * Get server status
+   * STATUS-04: No se retorna carboneApi, publicUrl ni ninguna configuración interna.
+   * El endpoint /status es @Public() — solo expone estado operacional.
    */
   getStatus(): StatusResponse {
     const pdfDir = STORAGE_PATHS.pdfs;
@@ -71,11 +65,7 @@ export class StatusService {
         directories: dirStatus,
         fileCount: fileCount,
         templates: templates,
-        config: {
-          carboneApi: this.configService.get<string>('carboneApi') || 'N/A',
-          publicUrl: this.configService.get<string>('publicUrl') || 'N/A',
-          port: this.configService.get<number>('port') || 3001,
-        },
+        // Eliminado: carboneApi, publicUrl — no exponer URLs internas
       },
     };
   }

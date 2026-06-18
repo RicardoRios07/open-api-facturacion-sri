@@ -279,9 +279,12 @@ export class SriService {
     page?: number;
     limit?: number;
     offset?: number;
+    cursor?: string;
   }): Promise<{
     data: any[];
     meta: { total: number; page: number; limit: number; totalPages: number };
+    nextCursor?: string | null;
+    hasMore?: boolean;
   }> {
     const page = filters.page || 1;
     const limit = filters.limit || 20;
@@ -293,7 +296,17 @@ export class SriService {
       limit,
     });
 
-    const data = result.data.map((c) => ({
+    // Keyset pagination nextCursor calculations
+    let hasMore = false;
+    let rows = result.data;
+    if (filters.cursor) {
+      hasMore = result.data.length > limit;
+      rows = hasMore ? result.data.slice(0, limit) : result.data;
+    } else {
+      hasMore = page * limit < result.total;
+    }
+
+    const data = rows.map((c) => ({
       id: c.id,
       emisorId: c.emisor_id,
       claveAcceso: c.clave_acceso,
@@ -320,6 +333,14 @@ export class SriService {
       updatedAt: c.updated_at,
     }));
 
+    let nextCursor: string | null = null;
+    if (hasMore && data.length > 0) {
+      const lastItem = rows[rows.length - 1];
+      nextCursor = Buffer.from(
+        JSON.stringify({ createdAt: lastItem.created_at, id: lastItem.id }),
+      ).toString('base64');
+    }
+
     return {
       data,
       meta: {
@@ -328,6 +349,8 @@ export class SriService {
         limit,
         totalPages: Math.ceil(result.total / limit),
       },
+      nextCursor,
+      hasMore,
     };
   }
 

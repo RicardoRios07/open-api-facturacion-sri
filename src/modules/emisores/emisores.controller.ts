@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Logger,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -15,7 +16,13 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { EmisoresService } from './emisores.service';
-import { CreateEmisorDto, UpdateEmisorDto, EmisorResponseDto } from './dto';
+import {
+  CreateEmisorDto,
+  UpdateEmisorDto,
+  EmisorResponseDto,
+  QueryEmisoresDto,
+  PaginatedEmisoresResponseDto,
+} from './dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
 
@@ -28,19 +35,23 @@ export class EmisoresController {
   constructor(private readonly emisoresService: EmisoresService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Listar emisores del tenant actual' })
+  @ApiOperation({ summary: 'Listar emisores con paginación keyset' })
   @ApiResponse({
     status: 200,
-    description: 'Lista de emisores',
-    type: [EmisorResponseDto],
+    description: 'Lista paginada de emisores',
+    type: PaginatedEmisoresResponseDto,
   })
-  async findAll(@CurrentUser() user: JwtPayload): Promise<EmisorResponseDto[]> {
+  async findAll(
+    @Query() query: QueryEmisoresDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<PaginatedEmisoresResponseDto> {
     // SUPERADMIN ve todos, otros ven solo los de su tenant
     if (user.rol === UserRole.SUPERADMIN) {
-      return this.emisoresService.findAll();
+      return this.emisoresService.findAll(query);
     }
-    return this.emisoresService.findAllByTenant(user.tenantId!);
+    return this.emisoresService.findAllByTenant(user.tenantId!, query);
   }
+
 
   @Get(':id')
   @ApiOperation({ summary: 'Obtener un emisor por ID' })

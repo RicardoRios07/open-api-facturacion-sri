@@ -37,7 +37,7 @@ export default () => ({
     defaultPage: parseInt(optionalEnv('SIGNATURE_DEFAULT_PAGE', '-1'), 10),
   },
 
-  // SRI Ecuador - Facturación Electrónica (optional)
+  // SRI Ecuador - Facturación Electrónica
   sri: {
     environment: optionalEnv('SRI_ENVIRONMENT', 'development'),
     wsdl: {
@@ -49,6 +49,20 @@ export default () => ({
         ? resolveDir(process.env.SRI_SIGNATURE_CERT_PATH)
         : '',
       certPassword: optionalEnv('SRI_SIGNATURE_CERT_PASSWORD', ''),
+    },
+    // Rate limiting parametrizable por tipo de operación (SOAP-01)
+    rateLimiting: {
+      recepcion: {
+        retries:   parseInt(optionalEnv('SRI_RECEPCION_RETRIES', '3'), 10),
+        delayMs:   parseInt(optionalEnv('SRI_RECEPCION_DELAY_MS', '1000'), 10),
+        timeoutMs: parseInt(optionalEnv('SRI_RECEPCION_TIMEOUT_MS', '30000'), 10),
+      },
+      autorizacion: {
+        retries:           parseInt(optionalEnv('SRI_AUTORIZACION_RETRIES', '5'), 10),
+        delayMs:           parseInt(optionalEnv('SRI_AUTORIZACION_DELAY_MS', '2000'), 10),
+        backoffMultiplier: parseFloat(optionalEnv('SRI_AUTORIZACION_BACKOFF_MULTIPLIER', '1.5')),
+        timeoutMs:         parseInt(optionalEnv('SRI_AUTORIZACION_TIMEOUT_MS', '60000'), 10),
+      },
     },
   },
 
@@ -101,6 +115,36 @@ export default () => ({
     certs: resolveDir(requireEnv('CERTS_DIR')),
     xmls: resolveDir(requireEnv('XMLS_DIR')),
   },
+
+  // Tenants configuration (TENANT-03, TENANT-04)
+  tenants: {
+    defaultPlan: optionalEnv('TENANT_DEFAULT_PLAN', 'BASICO'),
+    allowDeleteWithEmisores:
+      optionalEnv('TENANT_ALLOW_DELETE_WITH_EMISORES', 'false') === 'true',
+    pageSize: parseInt(optionalEnv('TENANTS_PAGE_SIZE', '20'), 10),
+  },
+
+  // Health Checks thresholds (STATUS-02)
+  healthChecks: {
+    memoryHeapMb: parseInt(optionalEnv('HEALTH_MEMORY_HEAP_MB', '150'), 10),
+    memoryRssMb: parseInt(optionalEnv('HEALTH_MEMORY_RSS_MB', '300'), 10),
+  },
+
+  // Queue options — BullMQ (QUEUE-01, QUEUE-02)
+  queues: {
+    sriEmision: {
+      attempts: parseInt(optionalEnv('QUEUE_SRI_ATTEMPTS', '3'), 10),
+      backoffDelayMs: parseInt(optionalEnv('QUEUE_SRI_BACKOFF_MS', '2000'), 10),
+      removeOnComplete: parseInt(optionalEnv('QUEUE_SRI_KEEP_COMPLETED', '1000'), 10),
+      removeOnFail: parseInt(optionalEnv('QUEUE_SRI_KEEP_FAILED', '5000'), 10),
+    },
+    webhookDispatch: {
+      attempts: parseInt(optionalEnv('QUEUE_WEBHOOK_ATTEMPTS', '5'), 10),
+      backoffDelayMs: parseInt(optionalEnv('QUEUE_WEBHOOK_BACKOFF_MS', '3000'), 10),
+      removeOnComplete: parseInt(optionalEnv('QUEUE_WEBHOOK_KEEP_COMPLETED', '500'), 10),
+      removeOnFail: parseInt(optionalEnv('QUEUE_WEBHOOK_KEEP_FAILED', '2000'), 10),
+    },
+  },
 });
 
 export interface AppConfig {
@@ -128,12 +172,23 @@ export interface AppConfig {
     defaultY: number;
     defaultPage: number;
   };
-  directories: {
-    templates: string;
-    pdfs: string;
-    certs: string;
-    xmls: string;
+  sri: {
+    environment: string;
+    wsdl: { reception: string; authorization: string };
+    signature: { certPath: string; certPassword: string };
+    rateLimiting: {
+      recepcion: { retries: number; delayMs: number; timeoutMs: number };
+      autorizacion: {
+        retries: number;
+        delayMs: number;
+        backoffMultiplier: number;
+        timeoutMs: number;
+      };
+    };
   };
+  jwt: { secret: string; expiresIn: string };
+  throttler: { ttl: number; limit: number };
+  cors: { allowedOrigins: string };
   encryptionKey: string;
   encryptionSalt: string;
   database: {
@@ -142,5 +197,33 @@ export interface AppConfig {
     name: string;
     user: string;
     password: string;
+    ssl: string;
+  };
+  redis: { host: string; port: number; password: string; db: number };
+  directories: {
+    templates: string;
+    pdfs: string;
+    certs: string;
+    xmls: string;
+  };
+  tenants: {
+    defaultPlan: string;
+    allowDeleteWithEmisores: boolean;
+    pageSize: number;
+  };
+  healthChecks: { memoryHeapMb: number; memoryRssMb: number };
+  queues: {
+    sriEmision: {
+      attempts: number;
+      backoffDelayMs: number;
+      removeOnComplete: number;
+      removeOnFail: number;
+    };
+    webhookDispatch: {
+      attempts: number;
+      backoffDelayMs: number;
+      removeOnComplete: number;
+      removeOnFail: number;
+    };
   };
 }

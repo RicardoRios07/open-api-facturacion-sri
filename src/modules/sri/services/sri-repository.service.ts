@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../../../database';
 import {
@@ -24,12 +26,9 @@ export class SriRepositoryService {
   private readonly logger = new Logger(SriRepositoryService.name);
 
   // ==========================================
-  // CACHE DE EMISOR (TTL: 5 minutos)
+  // CACHE DE EMISOR — Redis distribuido (REPO-01)
+  // Migrado de Map in-memory para consistencia multi-instancia.
   // ==========================================
-  private emisorCache: Map<string, { data: EmisorRecord; expiry: number }> =
-    new Map();
-  private puntoEmisionCache: Map<string, { data: any; expiry: number }> =
-    new Map();
   private readonly CACHE_TTL_MS: number;
 
   // Whitelist de tablas permitidas para bulkInsert
@@ -128,11 +127,12 @@ export class SriRepositoryService {
   constructor(
     private readonly db: DatabaseService,
     private readonly configService: ConfigService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {
     this.CACHE_TTL_MS = this.configService.get<number>(
       'CACHE_EMISOR_TTL_MS',
       300000,
-    ); // 5 min default
+    ); // 5 min default (ms)
   }
 
   // ==========================================
@@ -140,10 +140,11 @@ export class SriRepositoryService {
   // ==========================================
 
   async findEmisorByRuc(ruc: string): Promise<EmisorRecord | null> {
-    // Check cache first
-    const cached = this.emisorCache.get(ruc);
-    if (cached && Date.now() < cached.expiry) {
-      return cached.data;
+    // REPO-01: Verificar cache Redis distribuido
+    const cacheKey = `emisor:ruc:${ruc}`;
+    const cached = await this.cacheManager.get<EmisorRecord>(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     // Query database
@@ -152,12 +153,10 @@ export class SriRepositoryService {
       [ruc, 'ACTIVO'],
     );
 
-    // Store in cache if found
+    // Guardar en cache Redis si fue encontrado
     if (emisor) {
-      this.emisorCache.set(ruc, {
-        data: emisor,
-        expiry: Date.now() + this.CACHE_TTL_MS,
-      });
+      // cache-manager acepta TTL en ms
+      await this.cacheManager.set(cacheKey, emisor, this.CACHE_TTL_MS);
     }
 
     return emisor;
@@ -168,29 +167,26 @@ export class SriRepositoryService {
     establecimiento: string,
     puntoEmision: string,
   ): Promise<{ punto_emision_id: string; establecimiento_id: string } | null> {
-    // Check cache first
-    const cacheKey = `${emisorId}-${establecimiento}-${puntoEmision}`;
-    const cached = this.puntoEmisionCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiry) {
-      return cached.data;
+    // REPO-01: Verificar cache Redis distribuido
+    const cacheKey = `punto-emision:${emisorId}:${establecimiento}:${puntoEmision}`;
+    const cached = await this.cacheManager.get<{ punto_emision_id: string; establecimiento_id: string }>(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     // Query database
-    const result = await this.db.queryOne<any>(
+    const result = await this.db.queryOne<{ punto_emision_id: string; establecimiento_id: string }>(
       `SELECT pe.id as punto_emision_id, e.id as establecimiento_id
        FROM puntos_emision pe
        JOIN establecimientos e ON pe.establecimiento_id = e.id
        WHERE e.emisor_id = $1 AND e.codigo = $2 AND pe.codigo = $3
        AND e.estado = 'ACTIVO' AND pe.estado = 'ACTIVO'`,
-      [emisorId, establecimiento, puntoEmision],
+       [emisorId, establecimiento, puntoEmision],
     );
 
-    // Store in cache if found
+    // Guardar en cache Redis si fue encontrado
     if (result) {
-      this.puntoEmisionCache.set(cacheKey, {
-        data: result,
-        expiry: Date.now() + this.CACHE_TTL_MS,
-      });
+      await this.cacheManager.set(cacheKey, result, this.CACHE_TTL_MS);
     }
 
     return result;
@@ -451,8 +447,9 @@ export class SriRepositoryService {
     fechaHasta?: string;
     establecimiento?: string;
     puntoEmision?: string;
-    page: number;
+    page?: number;
     limit: number;
+    cursor?: string;
   }): Promise<{ data: any[]; total: number }> {
     const conditions: string[] = [];
     const params: any[] = [];
@@ -504,9 +501,36 @@ export class SriRepositoryService {
       params.push(filters.puntoEmision);
     }
 
+    // Keyset pagination decodification
+    if (filters.cursor) {
+      try {
+        const jsonStr = Buffer.from(filters.cursor, 'base64').toString('utf8');
+        const cursorData = JSON.parse(jsonStr);
+        if (cursorData && cursorData.createdAt && cursorData.id) {
+          // c.created_at y c.id son menores que el cursor (orden descendente)
+          conditions.push(`(c.created_at, c.id) < ($${paramIndex++}, $${paramIndex++})`);
+          params.push(new Date(cursorData.createdAt), cursorData.id);
+        }
+      } catch (err) {
+        throw new BadRequestException('Cursor de paginación inválido');
+      }
+    }
+
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const offset = (filters.page - 1) * filters.limit;
+
+    let limitClause = '';
+    if (filters.cursor) {
+      // Keyset: limit + 1 para determinar si hay más páginas
+      limitClause = `LIMIT $${paramIndex++}`;
+      params.push(filters.limit + 1);
+    } else {
+      // Offset: paginación tradicional
+      const page = filters.page || 1;
+      const offset = (page - 1) * filters.limit;
+      limitClause = `LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+      params.push(filters.limit, offset);
+    }
 
     // Get data with pagination and total count in a single query
     const dataResult = await this.db.query<any>(
@@ -537,9 +561,9 @@ export class SriRepositoryService {
       LEFT JOIN puntos_emision pe ON c.punto_emision_id = pe.id
       LEFT JOIN establecimientos est ON pe.establecimiento_id = est.id
       ${whereClause}
-      ORDER BY c.created_at DESC
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
-      [...params, filters.limit, offset],
+      ORDER BY c.created_at DESC, c.id DESC
+      ${limitClause}`,
+      params,
     );
 
     const total =
@@ -548,6 +572,7 @@ export class SriRepositoryService {
         : 0;
     return { data: dataResult.rows, total };
   }
+
 
   /**
    * Busca un comprobante por clave de acceso con info de XML disponible

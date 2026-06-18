@@ -3,26 +3,70 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ConflictException,
+  InternalServerErrorException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../../database/database.service';
-import { CreateTenantDto, UpdateTenantDto, TenantResponseDto } from './dto';
+import {
+  CreateTenantDto,
+  UpdateTenantDto,
+  TenantResponseDto,
+  QueryTenantsDto,
+  PaginatedTenantsResponseDto,
+} from './dto';
 
 @Injectable()
 export class TenantsService {
   private readonly logger = new Logger(TenantsService.name);
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly configService: ConfigService,
+  ) {}
 
-  async findAll(): Promise<TenantResponseDto[]> {
+  async findAll(query: QueryTenantsDto): Promise<PaginatedTenantsResponseDto> {
+    const limit = query.limit ?? 20;
+    const cursor = query.cursor;
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (cursor) {
+      conditions.push(`t.id > $${params.push(cursor)}`);
+    }
+
+    if (query.plan) {
+      conditions.push(`t.plan = $${params.push(query.plan)}`);
+    }
+
+    if (query.estado) {
+      conditions.push(`t.estado = $${params.push(query.estado)}`);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
     const result = await this.db.query(
       `SELECT t.id, t.nombre, t.plan, t.estado, t.created_at, t.updated_at,
               (SELECT COUNT(*) FROM emisores e WHERE e.tenant_id = t.id) as emisores_count
        FROM tenants t
-       ORDER BY t.created_at DESC`,
+       ${whereClause}
+       ORDER BY t.id ASC
+       LIMIT $${params.push(limit + 1)}`,
+      params,
     );
 
-    return result.rows.map((row) => this.mapToResponse(row));
+    const hasMore = result.rows.length > limit;
+    const rows = hasMore ? result.rows.slice(0, limit) : result.rows;
+    const nextCursor = hasMore ? (rows[rows.length - 1].id as string) : null;
+
+    return {
+      data: rows.map((row) => this.mapToResponse(row)),
+      nextCursor,
+      hasMore,
+    };
   }
+
 
   async findOne(id: string): Promise<TenantResponseDto> {
     const result = await this.db.query(
@@ -41,11 +85,19 @@ export class TenantsService {
   }
 
   async create(dto: CreateTenantDto): Promise<TenantResponseDto> {
+    // TENANT-03: El plan por defecto viene de configuración, nunca hardcodeado
+    const planDefault = this.configService.get<string>('tenants.defaultPlan');
+    if (!planDefault) {
+      throw new InternalServerErrorException(
+        'TENANT_DEFAULT_PLAN no está configurado',
+      );
+    }
+
     const result = await this.db.query(
       `INSERT INTO tenants (nombre, plan, estado)
        VALUES ($1, $2, 'ACTIVO')
        RETURNING id, nombre, plan, estado, created_at, updated_at`,
-      [dto.nombre, dto.plan || 'BASICO'],
+      [dto.nombre, dto.plan ?? planDefault],
     );
 
     this.logger.log(`Tenant creado: ${dto.nombre}`);
@@ -56,7 +108,7 @@ export class TenantsService {
     await this.findOne(id);
 
     const updates: string[] = [];
-    const values: any[] = [];
+    const values: unknown[] = [];
     let paramIndex = 1;
 
     if (dto.nombre !== undefined) {
@@ -65,11 +117,11 @@ export class TenantsService {
     }
     if (dto.plan !== undefined) {
       updates.push(`plan = $${paramIndex++}`);
-      values.push(dto.plan.toUpperCase());
+      values.push(dto.plan);
     }
     if (dto.estado !== undefined) {
       updates.push(`estado = $${paramIndex++}`);
-      values.push(dto.estado.toUpperCase());
+      values.push(dto.estado);
     }
 
     if (updates.length === 0) {
@@ -97,10 +149,22 @@ export class TenantsService {
       throw new BadRequestException(`El tenant ya se encuentra inactivo`);
     }
 
-    // Verificar si tiene emisores activos
+    // TENANT-04: Bloquear inactivación si tiene emisores activos (configurable)
+    const allowDeleteWithEmisores = this.configService.get<boolean>(
+      'tenants.allowDeleteWithEmisores',
+      false,
+    );
+
+    if (!allowDeleteWithEmisores && tenant.emisoresCount && tenant.emisoresCount > 0) {
+      throw new ConflictException(
+        `No se puede inactivar el tenant: tiene ${tenant.emisoresCount} emisor(es) activo(s). ` +
+          `Configure TENANT_ALLOW_DELETE_WITH_EMISORES=true para forzarlo.`,
+      );
+    }
+
     if (tenant.emisoresCount && tenant.emisoresCount > 0) {
       this.logger.warn(
-        `Tenant ${id} tiene ${tenant.emisoresCount} emisores asociados`,
+        `Tenant ${id} inactivado con ${tenant.emisoresCount} emisores activos (flag ALLOW_DELETE_WITH_EMISORES=true)`,
       );
     }
 
@@ -114,15 +178,15 @@ export class TenantsService {
     return this.findOne(id);
   }
 
-  private mapToResponse(row: any): TenantResponseDto {
+  private mapToResponse(row: Record<string, unknown>): TenantResponseDto {
     return {
-      id: row.id,
-      nombre: row.nombre,
-      plan: row.plan,
-      estado: row.estado,
-      createdAt: row.created_at?.toISOString(),
-      updatedAt: row.updated_at?.toISOString(),
-      emisoresCount: parseInt(row.emisores_count) || 0,
+      id: row.id as string,
+      nombre: row.nombre as string,
+      plan: row.plan as string,
+      estado: row.estado as string,
+      createdAt: (row.created_at as Date)?.toISOString(),
+      updatedAt: (row.updated_at as Date)?.toISOString(),
+      emisoresCount: parseInt(String(row.emisores_count)) || 0,
     };
   }
 }
