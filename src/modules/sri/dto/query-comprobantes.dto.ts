@@ -86,7 +86,7 @@ export class QueryComprobantesDto {
   @IsString()
   puntoEmision?: string;
 
-  @ApiPropertyOptional({ description: 'Número de página', default: 1 })
+  @ApiPropertyOptional({ description: 'Número de página (paginación tradicional)', default: 1 })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -100,6 +100,11 @@ export class QueryComprobantesDto {
   @Min(1)
   @Max(100)
   limit?: number = 20;
+
+  @ApiPropertyOptional({ description: 'Cursor Base64 para paginación keyset' })
+  @IsOptional()
+  @IsString()
+  cursor?: string;
 }
 
 /**
@@ -145,12 +150,15 @@ export class ComprobanteResponseDto {
 export class PaginatedComprobantesDto {
   data: ComprobanteResponseDto[];
   meta: {
-    total: number;
+    total?: number;
     page: number;
     limit: number;
-    totalPages: number;
+    totalPages?: number;
   };
+  nextCursor?: string | null;
+  hasMore?: boolean;
 }
+
 
 /**
  * DTO de respuesta detallada con detalles

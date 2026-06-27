@@ -6,6 +6,7 @@ import { redisStore } from 'cache-manager-ioredis-yet';
 /**
  * Módulo de caché distribuido con Redis.
  * Reemplaza Map in-memory para consistencia multi-nodo.
+ * Lee la configuración desde redis.* de la configuración centralizada en vez de variables de entorno directas.
  * TTL configurable via CACHE_TTL_SECONDS (default: 300s = 5min).
  */
 @Global()
@@ -16,16 +17,16 @@ import { redisStore } from 'cache-manager-ioredis-yet';
       inject: [ConfigService],
       isGlobal: true,
       useFactory: async (configService: ConfigService) => {
-        const redisHost = configService.get<string>('REDIS_HOST', 'localhost');
-        const redisPort = configService.get<number>('REDIS_PORT', 6379);
-        const redisPassword = configService.get<string>('REDIS_PASSWORD', '');
+        const redisHost = configService.getOrThrow<string>('redis.host');
+        const redisPort = configService.getOrThrow<number>('redis.port');
+        const redisPassword = configService.get<string>('redis.password') || undefined;
         const ttl = configService.get<number>('CACHE_TTL_SECONDS', 300);
 
         return {
           store: await redisStore({
             host: redisHost,
             port: redisPort,
-            password: redisPassword || undefined,
+            password: redisPassword,
             db: 1, // DB separada de BullMQ (que usa DB 0)
             ttl: ttl * 1000, // cache-manager espera ms
           }),

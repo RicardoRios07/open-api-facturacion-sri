@@ -3,53 +3,71 @@ import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
 /**
- * BUG-06 / Módulo global de colas con BullMQ + Redis.
- * Centraliza la conexión a Redis y define las colas del sistema.
+ * Módulo global de colas con BullMQ + Redis.
+ * Lee la conexión Redis desde la sección redis.* de configuration.ts
+ * en vez de ENV vars directas para consistencia.
+ * Opciones de cola parametrizables desde configuration.ts / ENV.
  */
 @Global()
 @Module({
   imports: [
-    // Conexión a Redis para BullMQ
+    // Conexión a Redis usando sección centralizada de configuration.ts
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         connection: {
-          host: configService.get<string>('REDIS_HOST', 'localhost'),
-          port: configService.get<number>('REDIS_PORT', 6379),
-          password: configService.get<string>('REDIS_PASSWORD', '') || undefined,
-          db: configService.get<number>('REDIS_DB', 0),
+          host:     configService.getOrThrow<string>('redis.host'),
+          port:     configService.getOrThrow<number>('redis.port'),
+          password: configService.get<string>('redis.password') || undefined,
+          db:       configService.getOrThrow<number>('redis.db'),
           maxRetriesPerRequest: null, // Requerido por BullMQ
         },
       }),
     }),
 
-    // Cola: Emisión de comprobantes
-    BullModule.registerQueue({
+    // Cola de emisión SRI — opciones parametrizables desde ENV
+    BullModule.registerQueueAsync({
       name: 'sri-emision',
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 2000,
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        defaultJobOptions: {
+          attempts: configService.getOrThrow<number>('queues.sriEmision.attempts'),
+          backoff: {
+            type: 'exponential',
+            delay: configService.getOrThrow<number>('queues.sriEmision.backoffDelayMs'),
+          },
+          removeOnComplete: {
+            count: configService.getOrThrow<number>('queues.sriEmision.removeOnComplete'),
+          },
+          removeOnFail: {
+            count: configService.getOrThrow<number>('queues.sriEmision.removeOnFail'),
+          },
         },
-        removeOnComplete: { count: 1000 }, // Mantener últimos 1000 jobs completados
-        removeOnFail: { count: 5000 },     // Mantener últimos 5000 jobs fallidos
-      },
+      }),
     }),
 
-    // Cola: Webhook dispatch
-    BullModule.registerQueue({
+    // Cola de webhook dispatch — opciones parametrizables desde ENV
+    BullModule.registerQueueAsync({
       name: 'webhook-dispatch',
-      defaultJobOptions: {
-        attempts: 5,
-        backoff: {
-          type: 'exponential',
-          delay: 3000, // 3s → 6s → 12s → 24s → 48s
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        defaultJobOptions: {
+          attempts: configService.getOrThrow<number>('queues.webhookDispatch.attempts'),
+          backoff: {
+            type: 'exponential',
+            delay: configService.getOrThrow<number>('queues.webhookDispatch.backoffDelayMs'),
+          },
+          removeOnComplete: {
+            count: configService.getOrThrow<number>('queues.webhookDispatch.removeOnComplete'),
+          },
+          removeOnFail: {
+            count: configService.getOrThrow<number>('queues.webhookDispatch.removeOnFail'),
+          },
         },
-        removeOnComplete: { count: 500 },
-        removeOnFail: { count: 2000 },
-      },
+      }),
     }),
   ],
   exports: [BullModule],

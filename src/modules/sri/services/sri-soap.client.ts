@@ -6,10 +6,12 @@ import {
   SriAutorizacionResponse,
   SriOperationResult,
   SriMensaje,
+  SriAutorizacion,
 } from '../interfaces';
 
 /**
- * Cliente SOAP para comunicación con los servicios web del SRI Ecuador.
+ * Rate limiting parametrizable y separado por tipo de operación.
+ * Backoff exponencial real en vez de delay lineal.
  */
 @Injectable()
 export class SriSoapClient {
@@ -34,7 +36,7 @@ export class SriSoapClient {
       this.logger.log(`Respuesta del SRI - Estado: ${response?.estado}`);
 
       return this.parseRecepcionResponse(response);
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
         `Error al validar comprobante: ${(error as Error).message}`,
       );
@@ -67,7 +69,7 @@ export class SriSoapClient {
       );
 
       return this.parseAutorizacionResponse(response);
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
         `Error al consultar autorización: ${(error as Error).message}`,
       );
@@ -75,23 +77,65 @@ export class SriSoapClient {
     }
   }
 
+  /**
+   * Rate limiting separado por operación con backoff exponencial.
+   * Recepción y autorización tienen parámetros independientes en la configuración.
+   */
   async enviarYAutorizar(
     xmlFirmado: string,
     claveAcceso: string,
-    maxRetries?: number,
-    retryDelay?: number,
   ): Promise<SriOperationResult> {
-    const retries =
-      maxRetries ?? this.configService.get<number>('SRI_MAX_RETRIES', 3);
-    const delay =
-      retryDelay ?? this.configService.get<number>('SRI_RETRY_DELAY_MS', 2000);
-      
-    const ambiente = claveAcceso.charAt(23) as '1' | '2';
-    // Paso 1: Validar comprobante (Recepción)
-    const recepcion = await this.validarComprobante(xmlFirmado, ambiente);
+    // Leer configuración separada por operación desde configuration.ts
+    const recepcionRetries = this.configService.get<number>(
+      'sri.rateLimiting.recepcion.retries', 3,
+    );
+    const autorizacionRetries = this.configService.get<number>(
+      'sri.rateLimiting.autorizacion.retries', 5,
+    );
+    const autorizacionDelayMs = this.configService.get<number>(
+      'sri.rateLimiting.autorizacion.delayMs', 2000,
+    );
+    const backoffMultiplier = this.configService.get<number>(
+      'sri.rateLimiting.autorizacion.backoffMultiplier', 1.5,
+    );
 
-    if (recepcion.estado === 'DEVUELTA') {
-      const mensajes = this.extractMensajes(recepcion);
+    const ambiente = claveAcceso.charAt(23) as '1' | '2';
+
+    const recepcionDelayMs = this.configService.get<number>(
+      'sri.rateLimiting.recepcion.delayMs', 2000,
+    );
+
+    let recepcion: SriRecepcionResponse | null = null;
+    let ultimoError: unknown = null;
+
+    this.logger.log(
+      `Recepción: máx ${recepcionRetries} intentos para ...${claveAcceso.slice(-8)}`,
+    );
+
+    for (let intento = 1; intento <= recepcionRetries; intento++) {
+      try {
+        if (intento > 1) {
+          await this.delayWithBackoff(recepcionDelayMs, intento, 1.5);
+        }
+        recepcion = await this.validarComprobante(xmlFirmado, ambiente);
+        ultimoError = null;
+        break;
+      } catch (error: unknown) {
+        ultimoError = error;
+        this.logger.warn(
+          `Intento ${intento}/${recepcionRetries} de recepción fallido por error de red: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+    }
+
+    if (ultimoError) {
+      throw ultimoError;
+    }
+
+    if (!recepcion || recepcion.estado === 'DEVUELTA') {
+      const mensajes = recepcion ? this.extractMensajes(recepcion) : [];
       return {
         success: false,
         claveAcceso,
@@ -100,10 +144,14 @@ export class SriSoapClient {
       };
     }
 
-    // Paso 2: Consultar autorización con reintentos
-    for (let intento = 1; intento <= retries; intento++) {
+    // Paso 2: Consultar autorización con reintentos y backoff exponencial
+    this.logger.log(
+      `Autorización: máx ${autorizacionRetries} intentos con backoff ${autorizacionDelayMs}ms × ${backoffMultiplier}`,
+    );
+
+    for (let intento = 1; intento <= autorizacionRetries; intento++) {
       if (intento > 1) {
-        await this.delay(delay);
+        await this.delayWithBackoff(autorizacionDelayMs, intento, backoffMultiplier);
       }
 
       const autorizacion = await this.autorizarComprobante(claveAcceso);
@@ -140,10 +188,14 @@ export class SriSoapClient {
           };
         }
       }
+
+      this.logger.log(
+        `Intento ${intento}/${autorizacionRetries} — comprobante EN PROCESO ...${claveAcceso.slice(-8)}`,
+      );
     }
 
     this.logger.warn(
-      `Comprobante EN PROCESO después de ${retries} intentos: ...${claveAcceso.slice(-8)}`,
+      `Comprobante EN PROCESO después de ${autorizacionRetries} intentos: ...${claveAcceso.slice(-8)}`,
     );
 
     return {
@@ -160,18 +212,32 @@ export class SriSoapClient {
     };
   }
 
-  private parseRecepcionResponse(response: any): SriRecepcionResponse {
+  /**
+   * Backoff exponencial con cap de 30 segundos.
+   * delay(ms) = min(baseMs × multiplier^(intento-1), 30000)
+   */
+  private async delayWithBackoff(
+    baseMs: number,
+    attempt: number,
+    multiplier: number,
+  ): Promise<void> {
+    const ms = Math.min(baseMs * Math.pow(multiplier, attempt - 1), 30_000);
+    this.logger.debug(`Backoff: esperando ${Math.round(ms)}ms antes del intento ${attempt}`);
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private parseRecepcionResponse(response: Record<string, unknown>): SriRecepcionResponse {
     return {
-      estado: response?.estado || 'DEVUELTA',
-      comprobantes: response?.comprobantes,
+      estado: (response?.estado as 'RECIBIDA' | 'DEVUELTA') || 'DEVUELTA',
+      comprobantes: response?.comprobantes as SriRecepcionResponse['comprobantes'],
     };
   }
 
-  private parseAutorizacionResponse(response: any): SriAutorizacionResponse {
+  private parseAutorizacionResponse(response: Record<string, unknown>): SriAutorizacionResponse {
     return {
-      claveAccesoConsultada: response?.claveAccesoConsultada || '',
-      numeroComprobantes: response?.numeroComprobantes || '0',
-      autorizaciones: response?.autorizaciones,
+      claveAccesoConsultada: (response?.claveAccesoConsultada as string) || '',
+      numeroComprobantes: (response?.numeroComprobantes as string) || '0',
+      autorizaciones: response?.autorizaciones as SriAutorizacionResponse['autorizaciones'],
     };
   }
 
@@ -197,17 +263,14 @@ export class SriSoapClient {
     return mensajes;
   }
 
-  private extractMensajesAutorizacion(auth: any): SriMensaje[] {
-    if (!auth.mensajes || !auth.mensajes.mensaje) {
+  private extractMensajesAutorizacion(auth: SriAutorizacion): SriMensaje[] {
+    const mensajes = auth.mensajes;
+    if (!mensajes || !mensajes.mensaje) {
       return [];
     }
 
-    return Array.isArray(auth.mensajes.mensaje)
-      ? auth.mensajes.mensaje
-      : [auth.mensajes.mensaje];
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return Array.isArray(mensajes.mensaje)
+      ? mensajes.mensaje
+      : [mensajes.mensaje];
   }
 }

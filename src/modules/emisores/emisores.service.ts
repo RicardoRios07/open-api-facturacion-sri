@@ -6,7 +6,14 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
-import { CreateEmisorDto, UpdateEmisorDto, EmisorResponseDto } from './dto';
+import {
+  CreateEmisorDto,
+  UpdateEmisorDto,
+  EmisorResponseDto,
+  QueryEmisoresDto,
+  PaginatedEmisoresResponseDto,
+  EmisorEstado,
+} from './dto';
 import * as forge from 'node-forge';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
@@ -15,19 +22,39 @@ import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
 export class EmisoresService {
   private readonly logger = new Logger(EmisoresService.name);
 
+  // Columnas SELECT extraídas como constante para evitar repetición
+  private static readonly EMISOR_COLUMNS = `
+    id, ruc, razon_social, nombre_comercial, direccion_matriz,
+    obligado_contabilidad, contribuyente_especial, agente_retencion,
+    contribuyente_rimpe, ambiente, estado, tenant_id,
+    certificado_p12 IS NOT NULL as tiene_certificado,
+    certificado_valido_hasta, certificado_sujeto,
+    created_at, updated_at
+  `;
+
   constructor(
     private readonly db: DatabaseService,
     private readonly encryptionService: EncryptionService,
   ) {}
 
   /**
-   * Convierte ambiente legible a código SRI
-   * pruebas -> 1, produccion -> 2
+   * Convierte ambiente legible a código SRI.
+   * No tiene fallback silencioso — lanza BadRequestException si el valor es inválido.
    */
-  private toAmbienteCodigo(ambiente?: string): string {
-    if (!ambiente) return '1'; // Default: pruebas
-    if (ambiente === '1' || ambiente === '2') return ambiente;
-    return ambiente.toLowerCase() === 'produccion' ? '2' : '1';
+  private toAmbienteCodigo(ambiente: string): string {
+    const map: Record<string, string> = {
+      pruebas:    '1',
+      produccion: '2',
+      '1': '1',
+      '2': '2',
+    };
+    const code = map[ambiente?.toLowerCase()];
+    if (!code) {
+      throw new BadRequestException(
+        `Ambiente inválido: "${ambiente}". Use: pruebas, produccion, 1 ó 2`,
+      );
+    }
+    return code;
   }
 
   /**
@@ -38,47 +65,94 @@ export class EmisoresService {
   }
 
   /**
-   * Normaliza estado a mayúsculas
+   * Normaliza estado a mayúsculas.
+   * El valor ya viene validado por @IsEnum(EmisorEstado) en el DTO.
    */
-  private toEstadoNormalizado(estado?: string): string {
-    if (!estado) return 'ACTIVO';
+  private toEstadoNormalizado(estado: string): string {
     return estado.toUpperCase();
   }
 
-  async findAll(): Promise<EmisorResponseDto[]> {
+  async findAll(query: QueryEmisoresDto): Promise<PaginatedEmisoresResponseDto> {
+    const limit = query.limit ?? 20;
+    const cursor = query.cursor;
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    // Default to ACTIVO state filter to avoid leakage of inactives by default
+    const estado = query.estado ?? EmisorEstado.ACTIVO;
+    conditions.push(`estado = $${params.push(estado)}`);
+
+    if (query.tenantId) {
+      conditions.push(`tenant_id = $${params.push(query.tenantId)}`);
+    }
+
+    if (cursor) {
+      conditions.push(`id > $${params.push(cursor)}`);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
     const result = await this.db.query(
-      `SELECT id, ruc, razon_social, nombre_comercial, direccion_matriz,
-              obligado_contabilidad, contribuyente_especial, agente_retencion,
-              contribuyente_rimpe, ambiente, estado, tenant_id,
-              certificado_p12 IS NOT NULL as tiene_certificado,
-              certificado_valido_hasta, certificado_sujeto,
-              created_at, updated_at
+      `SELECT ${EmisoresService.EMISOR_COLUMNS}
        FROM emisores
-       ORDER BY created_at DESC`,
+       ${whereClause}
+       ORDER BY id ASC
+       LIMIT $${params.push(limit + 1)}`,
+      params,
     );
 
-    return result.rows.map((row) => this.mapToResponse(row));
+    const hasMore = result.rows.length > limit;
+    const rows = hasMore ? result.rows.slice(0, limit) : result.rows;
+    const nextCursor = hasMore ? (rows[rows.length - 1].id as string) : null;
+
+    return {
+      data: rows.map((row) => this.mapToResponse(row)),
+      nextCursor,
+      hasMore,
+    };
   }
 
   /**
    * FIX P3: Listar emisores filtrados por tenant — previene data leakage
    */
-  async findAllByTenant(tenantId: string): Promise<EmisorResponseDto[]> {
+  async findAllByTenant(tenantId: string, query: QueryEmisoresDto): Promise<PaginatedEmisoresResponseDto> {
+    const limit = query.limit ?? 20;
+    const cursor = query.cursor;
+
+    const conditions: string[] = [`tenant_id = $1`];
+    const params: unknown[] = [tenantId];
+
+    // Default to ACTIVO state filter
+    const estado = query.estado ?? EmisorEstado.ACTIVO;
+    conditions.push(`estado = $${params.push(estado)}`);
+
+    if (cursor) {
+      conditions.push(`id > $${params.push(cursor)}`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
     const result = await this.db.query(
-      `SELECT id, ruc, razon_social, nombre_comercial, direccion_matriz,
-              obligado_contabilidad, contribuyente_especial, agente_retencion,
-              contribuyente_rimpe, ambiente, estado, tenant_id,
-              certificado_p12 IS NOT NULL as tiene_certificado,
-              certificado_valido_hasta, certificado_sujeto,
-              created_at, updated_at
+      `SELECT ${EmisoresService.EMISOR_COLUMNS}
        FROM emisores
-       WHERE tenant_id = $1
-       ORDER BY created_at DESC`,
-      [tenantId],
+       ${whereClause}
+       ORDER BY id ASC
+       LIMIT $${params.push(limit + 1)}`,
+      params,
     );
 
-    return result.rows.map((row) => this.mapToResponse(row));
+    const hasMore = result.rows.length > limit;
+    const rows = hasMore ? result.rows.slice(0, limit) : result.rows;
+    const nextCursor = hasMore ? (rows[rows.length - 1].id as string) : null;
+
+    return {
+      data: rows.map((row) => this.mapToResponse(row)),
+      nextCursor,
+      hasMore,
+    };
   }
+
 
   /**
    * FIX P3: Acceso seguro a un emisor — verifica que pertenece al tenant del usuario
@@ -104,12 +178,7 @@ export class EmisoresService {
 
   async findOne(id: string): Promise<EmisorResponseDto> {
     const result = await this.db.query(
-      `SELECT id, ruc, razon_social, nombre_comercial, direccion_matriz,
-              obligado_contabilidad, contribuyente_especial, agente_retencion,
-              contribuyente_rimpe, ambiente, estado, tenant_id,
-              certificado_p12 IS NOT NULL as tiene_certificado,
-              certificado_valido_hasta, certificado_sujeto,
-              created_at, updated_at
+      `SELECT ${EmisoresService.EMISOR_COLUMNS}
        FROM emisores
        WHERE id = $1`,
       [id],
@@ -184,12 +253,7 @@ export class EmisoresService {
 
   async findByRuc(ruc: string): Promise<EmisorResponseDto | null> {
     const result = await this.db.query(
-      `SELECT id, ruc, razon_social, nombre_comercial, direccion_matriz,
-              obligado_contabilidad, contribuyente_especial, agente_retencion,
-              contribuyente_rimpe, ambiente, estado, tenant_id,
-              certificado_p12 IS NOT NULL as tiene_certificado,
-              certificado_valido_hasta, certificado_sujeto,
-              created_at, updated_at
+      `SELECT ${EmisoresService.EMISOR_COLUMNS}
        FROM emisores
        WHERE ruc = $1`,
       [ruc],
@@ -208,18 +272,13 @@ export class EmisoresService {
    */
   async findByTenantId(tenantId: string): Promise<EmisorResponseDto[]> {
     const result = await this.db.query(
-      `SELECT id, ruc, razon_social, nombre_comercial, direccion_matriz,
-              obligado_contabilidad, contribuyente_especial, agente_retencion,
-              contribuyente_rimpe, ambiente, estado, tenant_id,
-              certificado_p12 IS NOT NULL as tiene_certificado,
-              certificado_valido_hasta, certificado_sujeto,
-              created_at, updated_at
+      `SELECT ${EmisoresService.EMISOR_COLUMNS}
        FROM emisores
        WHERE tenant_id = $1 AND estado = 'ACTIVO'`,
       [tenantId],
     );
 
-    return result.rows.map((row: any) => this.mapToResponse(row));
+    return result.rows.map((row: Record<string, unknown>) => this.mapToResponse(row));
   }
 
   async create(dto: CreateEmisorDto): Promise<EmisorResponseDto> {
@@ -229,18 +288,20 @@ export class EmisoresService {
       throw new BadRequestException(`Ya existe un emisor con RUC ${dto.ruc}`);
     }
 
+    // Si no se especifica ambiente, lanza error explícito
+    if (!dto.ambiente) {
+      throw new BadRequestException(
+        'El campo ambiente es requerido. Use: pruebas, produccion, 1 ó 2',
+      );
+    }
+
     const result = await this.db.query(
       `INSERT INTO emisores (
         ruc, razon_social, nombre_comercial, direccion_matriz,
         obligado_contabilidad, contribuyente_especial, agente_retencion,
         contribuyente_rimpe, ambiente, estado, tenant_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVO', $10)
-      RETURNING id, ruc, razon_social, nombre_comercial, direccion_matriz,
-                obligado_contabilidad, contribuyente_especial, agente_retencion,
-                contribuyente_rimpe, ambiente, estado, tenant_id,
-                false as tiene_certificado,
-                null as certificado_valido_hasta, null as certificado_sujeto,
-                created_at, updated_at`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING id`,
       [
         dto.ruc,
         dto.razonSocial,
@@ -251,12 +312,13 @@ export class EmisoresService {
         dto.agenteRetencion || null,
         dto.contribuyenteRimpe ?? false,
         this.toAmbienteCodigo(dto.ambiente),
+        EmisorEstado.ACTIVO,
         dto.tenantId || null,
       ],
     );
 
     this.logger.log(`Emisor creado: ${dto.ruc} - ${dto.razonSocial}`);
-    return this.mapToResponse(result.rows[0]);
+    return this.findOne(result.rows[0].id);
   }
 
   async update(id: string, dto: UpdateEmisorDto): Promise<EmisorResponseDto> {
@@ -264,7 +326,7 @@ export class EmisoresService {
     await this.findOne(id);
 
     const updates: string[] = [];
-    const values: any[] = [];
+    const values: unknown[] = [];
     let paramIndex = 1;
 
     if (dto.razonSocial !== undefined) {
@@ -301,6 +363,7 @@ export class EmisoresService {
     }
     if (dto.estado !== undefined) {
       updates.push(`estado = $${paramIndex++}`);
+      // El estado ya viene validado por @IsEnum en el DTO
       values.push(this.toEstadoNormalizado(dto.estado));
     }
 
@@ -314,17 +377,12 @@ export class EmisoresService {
     const result = await this.db.query(
       `UPDATE emisores SET ${updates.join(', ')}
        WHERE id = $${paramIndex}
-       RETURNING id, ruc, razon_social, nombre_comercial, direccion_matriz,
-                 obligado_contabilidad, contribuyente_especial, agente_retencion,
-                 contribuyente_rimpe, ambiente, estado,
-                 certificado_p12 IS NOT NULL as tiene_certificado,
-                 certificado_valido_hasta, certificado_sujeto,
-                 created_at, updated_at`,
+       RETURNING id`,
       values,
     );
 
     this.logger.log(`Emisor actualizado: ${id}`);
-    return this.mapToResponse(result.rows[0]);
+    return this.findOne(id);
   }
 
   async delete(id: string): Promise<EmisorResponseDto> {
@@ -337,22 +395,17 @@ export class EmisoresService {
     }
 
     // Eliminación lógica: cambiar estado a inactivo
-    const result = await this.db.query(
-      `UPDATE emisores SET 
+    await this.db.query(
+      `UPDATE emisores SET
         estado = 'INACTIVO',
         updated_at = NOW()
        WHERE id = $1
-       RETURNING id, ruc, razon_social, nombre_comercial, direccion_matriz,
-                 obligado_contabilidad, contribuyente_especial, agente_retencion,
-                 contribuyente_rimpe, ambiente, estado,
-                 certificado_p12 IS NOT NULL as tiene_certificado,
-                 certificado_valido_hasta, certificado_sujeto,
-                 created_at, updated_at`,
+       RETURNING id`,
       [id],
     );
 
     this.logger.log(`Emisor inactivado: ${id}`);
-    return this.mapToResponse(result.rows[0]);
+    return this.findOne(id);
   }
 
   async uploadCertificado(
@@ -367,14 +420,14 @@ export class EmisoresService {
     let certificateInfo: { validoHasta: Date; sujeto: string };
     try {
       certificateInfo = this.extractCertificateInfo(file, password);
-    } catch (error) {
-      throw new BadRequestException(
-        `Error al procesar el certificado: ${error.message}`,
-      );
+    } catch (error: unknown) {
+      // Tipado correcto de error en catch
+      const msg = error instanceof Error ? error.message : 'Error desconocido al procesar el certificado';
+      throw new BadRequestException(`Error al procesar el certificado: ${msg}`);
     }
 
     // Guardar el certificado
-    const result = await this.db.query(
+    await this.db.query(
       `UPDATE emisores SET
         certificado_p12 = $1,
         certificado_password = $2,
@@ -383,12 +436,7 @@ export class EmisoresService {
         certificado_updated_at = NOW(),
         updated_at = NOW()
        WHERE id = $5
-       RETURNING id, ruc, razon_social, nombre_comercial, direccion_matriz,
-                 obligado_contabilidad, contribuyente_especial, agente_retencion,
-                 contribuyente_rimpe, ambiente, estado,
-                 true as tiene_certificado,
-                 certificado_valido_hasta, certificado_sujeto,
-                 created_at, updated_at`,
+       RETURNING id`,
       [
         file,
         await this.encryptionService.encrypt(password),
@@ -399,14 +447,14 @@ export class EmisoresService {
     );
 
     this.logger.log(`Certificado cargado para emisor: ${id}`);
-    return this.mapToResponse(result.rows[0]);
+    return this.findOne(id);
   }
 
   async deleteCertificado(id: string): Promise<EmisorResponseDto> {
     // Verificar que existe
     await this.findOne(id);
 
-    const result = await this.db.query(
+    await this.db.query(
       `UPDATE emisores SET
         certificado_p12 = NULL,
         certificado_password = NULL,
@@ -415,17 +463,12 @@ export class EmisoresService {
         certificado_updated_at = NULL,
         updated_at = NOW()
        WHERE id = $1
-       RETURNING id, ruc, razon_social, nombre_comercial, direccion_matriz,
-                 obligado_contabilidad, contribuyente_especial, agente_retencion,
-                 contribuyente_rimpe, ambiente, estado,
-                 false as tiene_certificado,
-                 null as certificado_valido_hasta, null as certificado_sujeto,
-                 created_at, updated_at`,
+       RETURNING id`,
       [id],
     );
 
     this.logger.log(`Certificado eliminado para emisor: ${id}`);
-    return this.mapToResponse(result.rows[0]);
+    return this.findOne(id);
   }
 
   private extractCertificateInfo(
@@ -455,25 +498,25 @@ export class EmisoresService {
     return { validoHasta, sujeto };
   }
 
-  private mapToResponse(row: any): EmisorResponseDto {
+  private mapToResponse(row: Record<string, unknown>): EmisorResponseDto {
     return {
-      id: row.id,
-      ruc: row.ruc,
-      razonSocial: row.razon_social,
-      nombreComercial: row.nombre_comercial,
-      direccionMatriz: row.direccion_matriz,
-      obligadoContabilidad: row.obligado_contabilidad,
-      contribuyenteEspecial: row.contribuyente_especial,
-      agenteRetencion: row.agente_retencion,
-      contribuyenteRimpe: row.contribuyente_rimpe,
-      ambiente: row.ambiente,
-      estado: row.estado,
-      tenantId: row.tenant_id,
-      tieneCertificado: row.tiene_certificado,
-      certificadoValidoHasta: row.certificado_valido_hasta?.toISOString(),
-      certificadoSujeto: row.certificado_sujeto,
-      createdAt: row.created_at?.toISOString(),
-      updatedAt: row.updated_at?.toISOString(),
+      id: row.id as string,
+      ruc: row.ruc as string,
+      razonSocial: row.razon_social as string,
+      nombreComercial: row.nombre_comercial as string | undefined,
+      direccionMatriz: row.direccion_matriz as string,
+      obligadoContabilidad: row.obligado_contabilidad as boolean,
+      contribuyenteEspecial: row.contribuyente_especial as string | undefined,
+      agenteRetencion: row.agente_retencion as string | undefined,
+      contribuyenteRimpe: row.contribuyente_rimpe as boolean,
+      ambiente: row.ambiente as string,
+      estado: row.estado as string,
+      tenantId: row.tenant_id as string | undefined,
+      tieneCertificado: row.tiene_certificado as boolean,
+      certificadoValidoHasta: (row.certificado_valido_hasta as Date)?.toISOString(),
+      certificadoSujeto: row.certificado_sujeto as string | undefined,
+      createdAt: (row.created_at as Date)?.toISOString(),
+      updatedAt: (row.updated_at as Date)?.toISOString(),
     };
   }
 }

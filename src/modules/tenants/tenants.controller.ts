@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Logger,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -15,7 +16,13 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { TenantsService } from './tenants.service';
-import { CreateTenantDto, UpdateTenantDto, TenantResponseDto } from './dto';
+import {
+  CreateTenantDto,
+  UpdateTenantDto,
+  TenantResponseDto,
+  QueryTenantsDto,
+  PaginatedTenantsResponseDto,
+} from './dto';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../auth/dto/auth.dto';
 
@@ -29,16 +36,17 @@ export class TenantsController {
   constructor(private readonly tenantsService: TenantsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Listar todos los tenants (solo SUPERADMIN)' })
+  @ApiOperation({ summary: 'Listar tenants con paginación keyset y filtros (solo SUPERADMIN)' })
   @ApiResponse({
     status: 200,
-    description: 'Lista de tenants',
-    type: [TenantResponseDto],
+    description: 'Lista paginada de tenants',
+    type: PaginatedTenantsResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Se requiere rol SUPERADMIN' })
-  async findAll(): Promise<TenantResponseDto[]> {
-    return this.tenantsService.findAll();
+  async findAll(@Query() query: QueryTenantsDto): Promise<PaginatedTenantsResponseDto> {
+    return this.tenantsService.findAll(query);
   }
+
 
   @Get(':id')
   @ApiOperation({ summary: 'Obtener un tenant por ID (solo SUPERADMIN)' })

@@ -279,9 +279,12 @@ export class SriService {
     page?: number;
     limit?: number;
     offset?: number;
+    cursor?: string;
   }): Promise<{
     data: any[];
-    meta: { total: number; page: number; limit: number; totalPages: number };
+    meta: { total?: number; page: number; limit: number; totalPages?: number };
+    nextCursor?: string | null;
+    hasMore?: boolean;
   }> {
     const page = filters.page || 1;
     const limit = filters.limit || 20;
@@ -293,7 +296,10 @@ export class SriService {
       limit,
     });
 
-    const data = result.data.map((c) => ({
+    const hasMore = result.data.length > limit;
+    const rows = hasMore ? result.data.slice(0, limit) : result.data;
+
+    const data = rows.map((c) => ({
       id: c.id,
       emisorId: c.emisor_id,
       claveAcceso: c.clave_acceso,
@@ -320,14 +326,29 @@ export class SriService {
       updatedAt: c.updated_at,
     }));
 
+    let nextCursor: string | null = null;
+    if (hasMore && rows.length > 0) {
+      const lastItem = rows[rows.length - 1];
+      nextCursor = Buffer.from(
+        JSON.stringify({ createdAt: lastItem.created_at, id: lastItem.id }),
+      ).toString('base64');
+    }
+
+    const meta: { total?: number; page: number; limit: number; totalPages?: number } = {
+      page,
+      limit,
+    };
+
+    if (!filters.cursor) {
+      meta.total = result.total;
+      meta.totalPages = Math.ceil(result.total / limit);
+    }
+
     return {
       data,
-      meta: {
-        total: result.total,
-        page,
-        limit,
-        totalPages: Math.ceil(result.total / limit),
-      },
+      meta,
+      nextCursor,
+      hasMore,
     };
   }
 

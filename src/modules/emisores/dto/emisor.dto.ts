@@ -5,8 +5,63 @@ import {
   Length,
   Matches,
   IsNotEmpty,
+  IsEnum,
+  IsInt,
+  Min,
+  Max,
+  IsUUID,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type, Transform } from 'class-transformer';
+
+// Enums estrictos para ambiente y estado
+export enum EmisorAmbiente {
+  PRUEBAS = 'pruebas',
+  PRODUCCION = 'produccion',
+  /** Soporte para códigos SRI directos */
+  CODIGO_PRUEBAS = '1',
+  CODIGO_PRODUCCION = '2',
+}
+
+export enum EmisorEstado {
+  ACTIVO = 'ACTIVO',
+  INACTIVO = 'INACTIVO',
+}
+
+export class QueryEmisoresDto {
+  @ApiPropertyOptional({
+    description: 'Cursor (UUID) para paginación keyset (ID del último emisor de la página anterior)',
+  })
+  @IsOptional()
+  @IsUUID()
+  cursor?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filtrar por estado del emisor',
+    enum: EmisorEstado,
+  })
+  @IsOptional()
+  @IsEnum(EmisorEstado)
+  estado?: EmisorEstado;
+
+  @ApiPropertyOptional({
+    description: 'Filtrar por tenant ID',
+  })
+  @IsOptional()
+  @IsUUID()
+  tenantId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Cantidad máxima de registros a retornar',
+    default: 20,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value !== undefined ? parseInt(String(value), 10) : 20)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
 
 export class CreateEmisorDto {
   @ApiProperty({ description: 'RUC del emisor (13 dígitos)' })
@@ -51,11 +106,15 @@ export class CreateEmisorDto {
   contribuyenteRimpe?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Ambiente SRI: 1/pruebas o 2/produccion',
+    description: 'Ambiente SRI',
+    enum: EmisorAmbiente,
+    example: EmisorAmbiente.PRUEBAS,
   })
   @IsOptional()
-  @IsString()
-  ambiente?: string;
+  @IsEnum(EmisorAmbiente, {
+    message: `ambiente debe ser uno de: ${Object.values(EmisorAmbiente).join(', ')}`,
+  })
+  ambiente?: EmisorAmbiente;
 
   @ApiPropertyOptional({
     description: 'ID del tenant al que pertenece el emisor',
@@ -102,16 +161,24 @@ export class UpdateEmisorDto {
   contribuyenteRimpe?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Ambiente SRI: 1/pruebas o 2/produccion',
+    description: 'Ambiente SRI',
+    enum: EmisorAmbiente,
   })
   @IsOptional()
-  @IsString()
-  ambiente?: string;
+  @IsEnum(EmisorAmbiente, {
+    message: `ambiente debe ser uno de: ${Object.values(EmisorAmbiente).join(', ')}`,
+  })
+  ambiente?: EmisorAmbiente;
 
-  @ApiPropertyOptional({ description: 'Estado: ACTIVO o INACTIVO' })
+  @ApiPropertyOptional({
+    description: 'Estado del emisor',
+    enum: EmisorEstado,
+  })
   @IsOptional()
-  @IsString()
-  estado?: string;
+  @IsEnum(EmisorEstado, {
+    message: `estado debe ser uno de: ${Object.values(EmisorEstado).join(', ')}`,
+  })
+  estado?: EmisorEstado;
 }
 
 export class EmisorResponseDto {
@@ -145,7 +212,7 @@ export class EmisorResponseDto {
   @ApiProperty()
   ambiente: string;
 
-  @ApiProperty()
+  @ApiProperty({ enum: EmisorEstado })
   estado: string;
 
   @ApiPropertyOptional()
@@ -173,3 +240,15 @@ export class UploadCertificadoDto {
   @IsNotEmpty()
   password: string;
 }
+
+export class PaginatedEmisoresResponseDto {
+  @ApiProperty({ type: [EmisorResponseDto] })
+  data: EmisorResponseDto[];
+
+  @ApiPropertyOptional({ description: 'Cursor para la siguiente página, null si no hay más' })
+  nextCursor: string | null;
+
+  @ApiProperty({ description: 'Indica si hay más elementos disponibles' })
+  hasMore: boolean;
+}
+
