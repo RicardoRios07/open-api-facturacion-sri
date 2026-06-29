@@ -52,14 +52,15 @@ services:
 
     # Port mapping
     ports:
-      - '${PORT:-3001}:3001'
+      - '${PORT:-3002}:${PORT:-3002}'
 
     # Volume mounts for persistent data
     volumes:
-      - ${HOST_TEMPLATES_PATH:-../templates}:/data/templates
-      - ${HOST_PDFS_PATH:-../pdfs}:/data/pdfs
-      - ${HOST_CERTS_PATH:-../certs}:/data/certs
-      - ${HOST_XMLS_PATH:-../xmls}:/data/xmls
+      - ${HOST_TEMPLATES_PATH:-./templates}:/data/templates
+      - ${HOST_PDFS_PATH:-./pdfs}:/data/pdfs
+      - ${HOST_CERTS_PATH:-./certs}:/data/certs
+      - ${HOST_XMLS_PATH:-./xmls}:/data/xmls
+      - ./database:/app/database:ro
 
     depends_on:
       redis:
@@ -74,7 +75,7 @@ services:
           '--no-verbose',
           '--tries=1',
           '--spider',
-          'http://localhost:3001/status',
+          'http://localhost:${PORT:-3002}/status',
         ]
       interval: 30s
       timeout: 10s

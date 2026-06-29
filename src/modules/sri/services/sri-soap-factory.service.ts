@@ -17,6 +17,10 @@ export class SriSoapFactoryService {
     autorizacion: {
       '1': 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl', // Pruebas
       '2': 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl',    // Producción
+    },
+    consultaContribuyente: {
+      '1': 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/ConsultaContribuyente?wsdl', // Pruebas
+      '2': 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/ConsultaContribuyente?wsdl',    // Producción
     }
   };
 
@@ -60,6 +64,29 @@ export class SriSoapFactoryService {
     }
 
     this.logger.log(`Creando nuevo cliente SOAP de Autorización para ambiente ${ambiente}`);
+    const client = await soap.createClientAsync(wsdlUrl);
+    
+    this.clients.set(cacheKey, client);
+    return client;
+  }
+
+  /**
+   * Obtiene (o crea y cachea) un cliente SOAP para el servicio de Consulta de Contribuyente
+   * @param ambiente '1' para Pruebas, '2' para Producción
+   */
+  async getConsultaContribuyenteClient(ambiente: '1' | '2'): Promise<Client> {
+    const cacheKey = `consulta_${ambiente}`;
+    
+    if (this.clients.has(cacheKey)) {
+      return this.clients.get(cacheKey)!;
+    }
+
+    const wsdlUrl = this.WSDL_URLS.consultaContribuyente[ambiente];
+    if (!wsdlUrl) {
+      throw new Error(`Ambiente no válido para consulta: ${ambiente}`);
+    }
+
+    this.logger.log(`Creando nuevo cliente SOAP de Consulta Contribuyente para ambiente ${ambiente}`);
     const client = await soap.createClientAsync(wsdlUrl);
     
     this.clients.set(cacheKey, client);

@@ -895,4 +895,74 @@ export class SriService {
       detalle,
     };
   }
+
+  /**
+   * Consulta datos públicos de un RUC o cédula usando API gratuita
+   */
+  async consultarRuc(
+    identificacion: string,
+  ): Promise<{
+    existe: boolean;
+    identificacion: string;
+    razonSocial?: string;
+    nombreComercial?: string;
+    error?: string;
+  }> {
+    const isCedula = /^\d{10}$/.test(identificacion);
+
+    try {
+      if (isCedula) {
+        // ── Consulta de CÉDULA (API cédula con token) ──
+        const token = this.configService.get<string>('SOCKET_STUDIO_TOKEN_CEDULA');
+        if (!token) {
+          return { existe: false, identificacion, error: 'Token de cédula no configurado' };
+        }
+        const res = await fetch(
+          `https://apicedula.socket-studio.com/consulta-cedula/consulta/${identificacion}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(8000),
+          },
+        );
+        if (!res.ok) {
+          return { existe: false, identificacion, error: 'No se encontraron datos' };
+        }
+        const data = await res.json();
+        if (!data || !data.nombres) {
+          return { existe: false, identificacion, error: 'No se encontraron datos' };
+        }
+        return {
+          existe: true,
+          identificacion,
+          razonSocial: data.nombres,
+        };
+      } else {
+        // ── Consulta de RUC (API ruc con token) ──
+        const token = this.configService.get<string>('SOCKET_STUDIO_TOKEN_RUC');
+        const res = await fetch(
+          `https://apiruc.socket-studio.com/api/ruc/consulta/free/${identificacion}`,
+          {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            signal: AbortSignal.timeout(8000),
+          },
+        );
+        if (!res.ok) {
+          return { existe: false, identificacion, error: 'No se encontraron datos' };
+        }
+        const data = await res.json();
+        if (!data || !data.razon_social) {
+          return { existe: false, identificacion, error: 'No se encontraron datos' };
+        }
+        return {
+          existe: true,
+          identificacion,
+          razonSocial: data.razon_social,
+          nombreComercial: data.nombre_comercial || undefined,
+        };
+      }
+    } catch (error) {
+      this.logger.error(`Error consultando ${identificacion}: ${(error as Error).message}`);
+      return { existe: false, identificacion, error: 'Error de conexión con el servicio de consulta' };
+    }
+  }
 }

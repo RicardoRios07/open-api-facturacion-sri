@@ -39,6 +39,8 @@ lerna-debug.log*
 .env
 .env.*
 !.env.example
+!.env.production.example
+!.env.staging.example
 
 # Internal planning and analysis docs
 # apicore-*.md
@@ -62,4 +64,6 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Agents
 .agents
 .agent
+.opencode
+.opencode/
 skills-lock.json
