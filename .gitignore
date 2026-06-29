@@ -67,3 +67,5 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 .opencode
 .opencode/
 skills-lock.json
+
+# Auto-deploy trigger Mon Jun 29 10:38:48 -05 2026
