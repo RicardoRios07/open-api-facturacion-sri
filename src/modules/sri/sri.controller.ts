@@ -590,4 +590,30 @@ export class SriController {
     }
     return this.sriService.sincronizarConSri(body);
   }
+
+  @Get('consultar-ruc/:identificacion')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Consultar datos de RUC o cédula',
+    description:
+      'Obtiene datos públicos de un contribuyente por RUC o cédula usando API pública del SRI',
+  })
+  @ApiParam({
+    name: 'identificacion',
+    description: 'Número de RUC (13 dígitos) o cédula (10 dígitos)',
+  })
+  @ApiResponse({ status: 200, description: 'Datos del contribuyente' })
+  @ApiResponse({ status: 404, description: 'No encontrado' })
+  async consultarRuc(
+    @Param('identificacion') identificacion: string,
+  ): Promise<{
+    existe: boolean;
+    identificacion: string;
+    razonSocial?: string;
+    nombreComercial?: string;
+    error?: string;
+  }> {
+    this.logger.log(`GET /sri/consultar-ruc/${identificacion}`);
+    return this.sriService.consultarRuc(identificacion);
+  }
 }
