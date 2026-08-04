@@ -14,13 +14,13 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install ALL dependencies (including devDependencies for build)
-RUN npm install --legacy-peer-deps
+RUN npm ci --legacy-peer-deps
 
 # Copy source code
 COPY . .
 
 # Build the application
-RUN npm run build
+RUN npx nest build
 
 # Remove devDependencies after build
 RUN npm prune --production
