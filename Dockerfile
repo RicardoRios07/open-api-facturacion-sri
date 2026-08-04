@@ -70,7 +70,7 @@ EXPOSE 3001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3001/status || exit 1
+    CMD wget --no-verbose --tries=1 --spider --header="Origin: https://admin.vendi.ec" http://localhost:3001/status || exit 1
 
 # Entrypoint fixes volume permissions as root, then drops to appuser via su-exec
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
