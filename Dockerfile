@@ -10,6 +10,9 @@ FROM node:22-alpine AS builder
 # Set working directory
 WORKDIR /app
 
+# Builder stage needs devDependencies (typescript, @nestjs/cli) to compile
+ENV NODE_ENV=development
+
 # Copy package files first (for caching)
 COPY package*.json ./
 
