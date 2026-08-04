@@ -13,4 +13,4 @@ jobs:
         run: |
           curl -fsS -X POST \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_API_TOKEN }}" \
-            "https://159.195.17.158:8000/api/v1/deploy?uuid=ype2w8f78sgsvngmezzorska&force=true"
+            "https://coolify-api.vendi.ec/api/v1/deploy?uuid=ype2w8f78sgsvngmezzorska&force=true"
