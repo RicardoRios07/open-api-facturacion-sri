@@ -40,6 +40,8 @@ import { extractRucFromClaveAcceso } from './utils/clave-acceso.utils';
 import {
   CreateFacturaDto,
   FacturaResponseDto,
+  CreateNotaVentaDto,
+  NotaVentaResponseDto,
   CreateNotaCreditoDto,
   NotaCreditoResponseDto,
   CreateNotaDebitoDto,
@@ -110,6 +112,37 @@ export class SriController {
     // Validar que el RUC del emisor pertenece al tenant del usuario
     await this.emisoresService.validateRucAccess(dto.emisor.ruc, user);
     return this.sriService.emitirFactura(dto);
+  }
+
+  @Post('emitir/nota-venta')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Emitir nota de venta electrónica (RIMPE / RISE)',
+    description:
+      'Genera, firma y envía nota de venta al SRI. Sin IVA desglosado.',
+  })
+  @ApiBody({ type: CreateNotaVentaDto })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Nota de venta encolada para procesamiento asíncrono (según configuración del servidor)',
+    type: EmisionEncoladaResponseDto,
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Nota de venta procesada sincronamente (según configuración del servidor)',
+    type: NotaVentaResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Datos inválidos' })
+  async emitirNotaVenta(
+    @Body() dto: CreateNotaVentaDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<EmisionEncoladaResponseDto | NotaVentaResponseDto> {
+    this.logger.log(`POST /sri/emitir/nota-venta`);
+    // Validar que el RUC del emisor pertenece al tenant del usuario
+    await this.emisoresService.validateRucAccess(dto.emisor.ruc, user);
+    return this.sriService.emitirNotaVenta(dto);
   }
 
   @Post('emitir/nota-credito')

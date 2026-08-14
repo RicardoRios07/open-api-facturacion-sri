@@ -5,6 +5,9 @@ import {
   InfoTributaria,
   InfoFactura,
   DetalleFactura,
+  NotaVenta,
+  InfoNotaVenta,
+  DetalleNotaVenta,
   NotaCredito,
   InfoNotaCredito,
   DetalleNotaCredito,
@@ -21,6 +24,7 @@ import {
 } from '../interfaces';
 import {
   FACTURA_VERSION,
+  NOTA_VENTA_VERSION,
   NOTA_CREDITO_VERSION,
   NOTA_DEBITO_VERSION,
   RETENCION_VERSION,
@@ -235,6 +239,140 @@ export class XmlBuilderService {
 
   private formatDecimal(value: number, decimals: number): string {
     return value.toFixed(decimals);
+  }
+
+  /**
+   * Construye el XML de una Nota de Venta electrónica (RIMPE / RISE)
+   */
+  buildNotaVenta(notaVenta: NotaVenta): string {
+    this.logger.log('Construyendo XML de nota de venta');
+
+    const xmlObj: any = {
+      notaVenta: {
+        $: {
+          id: 'comprobante',
+          version: NOTA_VENTA_VERSION,
+        },
+        infoTributaria: this.buildInfoTributaria(notaVenta.infoTributaria),
+        infoNotaVenta: this.buildInfoNotaVenta(notaVenta.infoNotaVenta),
+        detalles: {
+          detalle: notaVenta.detalles.map((d) =>
+            this.buildDetalleNotaVenta(d),
+          ),
+        },
+      },
+    };
+
+    if (notaVenta.infoAdicional && notaVenta.infoAdicional.length > 0) {
+      xmlObj.notaVenta.infoAdicional = {
+        campoAdicional: notaVenta.infoAdicional.map((campo) => ({
+          $: { nombre: campo.nombre },
+          _: campo.valor,
+        })),
+      };
+    }
+
+    const xml = this.builder.buildObject(xmlObj);
+    this.logger.log('XML de nota de venta construido exitosamente');
+    return xml;
+  }
+
+  private buildInfoNotaVenta(info: InfoNotaVenta): Record<string, any> {
+    const result: Record<string, any> = {
+      fechaEmision: info.fechaEmision,
+    };
+
+    if (info.dirEstablecimiento) {
+      result.dirEstablecimiento = info.dirEstablecimiento;
+    }
+
+    if (info.contribuyenteEspecial) {
+      result.contribuyenteEspecial = info.contribuyenteEspecial;
+    }
+
+    result.obligadoContabilidad = info.obligadoContabilidad;
+    result.tipoIdentificacionComprador = info.tipoIdentificacionComprador;
+    result.razonSocialComprador = info.razonSocialComprador;
+    result.identificacionComprador = info.identificacionComprador;
+    result.totalSinImpuestos = this.formatDecimal(info.totalSinImpuestos, 2);
+    result.totalDescuento = this.formatDecimal(info.totalDescuento, 2);
+
+    if (info.totalConImpuestos && info.totalConImpuestos.length > 0) {
+      result.totalConImpuestos = {
+        totalImpuesto: info.totalConImpuestos.map((imp) => ({
+          codigo: imp.codigo,
+          codigoPorcentaje: imp.codigoPorcentaje,
+          baseImponible: this.formatDecimal(imp.baseImponible, 2),
+          tarifa:
+            imp.tarifa !== undefined
+              ? this.formatDecimal(imp.tarifa, 2)
+              : undefined,
+          valor: this.formatDecimal(imp.valor, 2),
+        })),
+      };
+    }
+
+    if (info.propina !== undefined) {
+      result.propina = this.formatDecimal(info.propina, 2);
+    }
+
+    result.importeTotal = this.formatDecimal(info.importeTotal, 2);
+
+    if (info.moneda) {
+      result.moneda = info.moneda;
+    }
+
+    result.pagos = {
+      pago: info.pagos.map((p) => {
+        const pago: Record<string, any> = {
+          formaPago: p.formaPago,
+          total: this.formatDecimal(p.total, 2),
+        };
+        if (p.plazo !== undefined) {
+          pago.plazo = p.plazo;
+          pago.unidadTiempo = p.unidadTiempo || 'dias';
+        }
+        return pago;
+      }),
+    };
+
+    return result;
+  }
+
+  private buildDetalleNotaVenta(
+    detalle: DetalleNotaVenta,
+  ): Record<string, any> {
+    const result: Record<string, any> = {
+      codigoPrincipal: detalle.codigoPrincipal,
+    };
+
+    if (detalle.codigoAuxiliar) {
+      result.codigoAuxiliar = detalle.codigoAuxiliar;
+    }
+
+    result.descripcion = detalle.descripcion;
+
+    if (detalle.unidadMedida) {
+      result.unidadMedida = detalle.unidadMedida;
+    }
+
+    result.cantidad = this.formatDecimal(detalle.cantidad, 6);
+    result.precioUnitario = this.formatDecimal(detalle.precioUnitario, 6);
+    result.descuento = this.formatDecimal(detalle.descuento, 2);
+    result.precioTotalSinImpuesto = this.formatDecimal(
+      detalle.precioTotalSinImpuesto,
+      2,
+    );
+
+    if (detalle.detallesAdicionales && detalle.detallesAdicionales.length > 0) {
+      result.detallesAdicionales = {
+        detAdicional: detalle.detallesAdicionales.map((d) => ({
+          $: { nombre: d.nombre, valor: d.valor },
+        })),
+      };
+    }
+
+    return result;
   }
 
   /**

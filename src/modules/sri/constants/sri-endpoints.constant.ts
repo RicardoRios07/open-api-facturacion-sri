@@ -26,6 +26,7 @@ export const SRI_ENDPOINTS = {
  * Versión del XML de comprobantes
  */
 export const FACTURA_VERSION = '1.1.0';
+export const NOTA_VENTA_VERSION = '1.1.0';
 export const NOTA_CREDITO_VERSION = '1.1.0';
 export const NOTA_DEBITO_VERSION = '1.0.0';
 export const RETENCION_VERSION = '2.0.0';
