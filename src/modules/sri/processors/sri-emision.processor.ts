@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { FacturaService } from '../services/factura.service';
+import { NotaVentaService } from '../services/nota-venta.service';
 import { NotaCreditoService } from '../services/nota-credito.service';
 import { NotaDebitoService } from '../services/nota-debito.service';
 import { RetencionService } from '../services/retencion.service';
@@ -13,6 +14,7 @@ export class SriEmisionProcessor extends WorkerHost {
 
   constructor(
     private readonly facturaService: FacturaService,
+    private readonly notaVentaService: NotaVentaService,
     private readonly notaCreditoService: NotaCreditoService,
     private readonly notaDebitoService: NotaDebitoService,
     private readonly retencionService: RetencionService,
@@ -29,6 +31,8 @@ export class SriEmisionProcessor extends WorkerHost {
       switch (tipo) {
         case 'FACTURA':
           return await this.facturaService.emitirFactura(dto);
+        case 'NOTA_VENTA':
+          return await this.notaVentaService.emitirNotaVenta(dto);
         case 'NOTA_CREDITO':
           return await this.notaCreditoService.emitirNotaCredito(dto);
         case 'NOTA_DEBITO':

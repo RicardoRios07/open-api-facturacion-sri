@@ -136,6 +136,45 @@ export interface RetencionFactura {
 }
 
 /**
+ * Información específica de la Nota de Venta (RIMPE / RISE, sin IVA desglosado)
+ */
+export interface InfoNotaVenta {
+  fechaEmision: string;
+  dirEstablecimiento?: string;
+  contribuyenteEspecial?: string;
+  obligadoContabilidad: 'SI' | 'NO';
+  tipoIdentificacionComprador: TipoIdentificacion;
+  razonSocialComprador: string;
+  identificacionComprador: string;
+  totalSinImpuestos: number;
+  totalDescuento: number;
+  totalConImpuestos: TotalImpuesto[];
+  propina?: number;
+  importeTotal: number;
+  moneda?: string;
+  pagos: Pago[];
+}
+
+export interface DetalleNotaVenta {
+  codigoPrincipal: string;
+  codigoAuxiliar?: string;
+  descripcion: string;
+  unidadMedida?: string;
+  cantidad: number;
+  precioUnitario: number;
+  descuento: number;
+  precioTotalSinImpuesto: number;
+  detallesAdicionales?: DetalleAdicional[];
+}
+
+export interface NotaVenta {
+  infoTributaria: InfoTributaria;
+  infoNotaVenta: InfoNotaVenta;
+  detalles: DetalleNotaVenta[];
+  infoAdicional?: CampoAdicional[];
+}
+
+/**
  * Información específica de la Nota de Crédito
  */
 export interface InfoNotaCredito {

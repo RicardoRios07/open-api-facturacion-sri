@@ -8,6 +8,7 @@ import { DatabaseService } from '../../database';
 import {
   SriSoapClient,
   FacturaService,
+  NotaVentaService,
   NotaCreditoService,
   NotaDebitoService,
   RetencionService,
@@ -19,6 +20,8 @@ import { XmlStorageService } from './services/xml-storage.service';
 import {
   CreateFacturaDto,
   FacturaResponseDto,
+  CreateNotaVentaDto,
+  NotaVentaResponseDto,
   CreateNotaCreditoDto,
   NotaCreditoResponseDto,
   CreateNotaDebitoDto,
@@ -40,6 +43,7 @@ export class SriService {
     private readonly repository: SriRepositoryService,
     private readonly xmlStorage: XmlStorageService,
     private readonly facturaService: FacturaService,
+    private readonly notaVentaService: NotaVentaService,
     private readonly notaCreditoService: NotaCreditoService,
     private readonly notaDebitoService: NotaDebitoService,
     private readonly retencionService: RetencionService,
@@ -92,6 +96,30 @@ export class SriService {
     xmlFirmado: string;
   }> {
     return this.facturaService.generarFacturaFirmadaDebug(dto);
+  }
+
+  // ==========================================
+  // NOTA DE VENTA — Delegado a NotaVentaService
+  // ==========================================
+
+  async emitirNotaVenta(
+    dto: CreateNotaVentaDto,
+  ): Promise<EmisionEncoladaResponseDto | NotaVentaResponseDto> {
+    const isAsync =
+      this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    if (!isAsync) {
+      return this.notaVentaService.emitirNotaVenta(dto);
+    }
+    const job = await this.emisionQueue.add('emision', {
+      tipo: 'NOTA_VENTA',
+      dto,
+    });
+    this.logger.log(`Nota de venta encolada con Job ID: ${job.id}`);
+    return {
+      mensaje: 'Nota de venta encolada para emisión asíncrona',
+      jobId: job.id!,
+      estado: 'EN_COLA',
+    };
   }
 
   // ==========================================

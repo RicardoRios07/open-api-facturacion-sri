@@ -6,6 +6,7 @@ export * from './identificacion-validator.service';
 export * from './catalogo-validator.service';
 export * from './sri-base.service';
 export * from './factura.service';
+export * from './nota-venta.service';
 export * from './nota-credito.service';
 export * from './nota-debito.service';
 export * from './retencion.service';
