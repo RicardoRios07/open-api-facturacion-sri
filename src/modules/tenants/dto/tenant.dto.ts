@@ -1,4 +1,13 @@
-import { IsString, IsOptional, IsNotEmpty, IsEnum, IsInt, Min, Max, IsUUID } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsNotEmpty,
+  IsEnum,
+  IsInt,
+  Min,
+  Max,
+  IsUUID,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type, Transform } from 'class-transformer';
 
@@ -33,7 +42,8 @@ export class QueryTenantsDto {
   estado?: TenantEstado;
 
   @ApiPropertyOptional({
-    description: 'Cursor (UUID) para paginación (ID del último tenant obtenido en la página anterior)',
+    description:
+      'Cursor (UUID) para paginación (ID del último tenant obtenido en la página anterior)',
   })
   @IsOptional()
   @IsUUID()
@@ -44,13 +54,14 @@ export class QueryTenantsDto {
     default: 20,
   })
   @IsOptional()
-  @Transform(({ value }) => value !== undefined ? parseInt(String(value), 10) : 20)
+  @Transform(({ value }) =>
+    value !== undefined ? parseInt(String(value), 10) : 20,
+  )
   @IsInt()
   @Min(1)
   @Max(100)
   limit?: number;
 }
-
 
 export class CreateTenantDto {
   @ApiProperty({ description: 'Nombre del tenant/empresa' })
@@ -124,10 +135,11 @@ export class PaginatedTenantsResponseDto {
   @ApiProperty({ type: [TenantResponseDto] })
   data: TenantResponseDto[];
 
-  @ApiPropertyOptional({ description: 'Cursor para la siguiente página, null si no hay más' })
+  @ApiPropertyOptional({
+    description: 'Cursor para la siguiente página, null si no hay más',
+  })
   nextCursor: string | null;
 
   @ApiProperty({ description: 'Indica si hay más elementos disponibles' })
   hasMore: boolean;
 }
-

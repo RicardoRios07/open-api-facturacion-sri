@@ -43,7 +43,7 @@ export class EmisoresService {
    */
   private toAmbienteCodigo(ambiente: string): string {
     const map: Record<string, string> = {
-      pruebas:    '1',
+      pruebas: '1',
       produccion: '2',
       '1': '1',
       '2': '2',
@@ -72,7 +72,9 @@ export class EmisoresService {
     return estado.toUpperCase();
   }
 
-  async findAll(query: QueryEmisoresDto): Promise<PaginatedEmisoresResponseDto> {
+  async findAll(
+    query: QueryEmisoresDto,
+  ): Promise<PaginatedEmisoresResponseDto> {
     const limit = query.limit ?? 20;
     const cursor = query.cursor;
 
@@ -91,7 +93,9 @@ export class EmisoresService {
       conditions.push(`id > $${params.push(cursor)}`);
     }
 
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
 
     const result = await this.db.query(
       `SELECT ${EmisoresService.EMISOR_COLUMNS}
@@ -116,7 +120,10 @@ export class EmisoresService {
   /**
    * FIX P3: Listar emisores filtrados por tenant — previene data leakage
    */
-  async findAllByTenant(tenantId: string, query: QueryEmisoresDto): Promise<PaginatedEmisoresResponseDto> {
+  async findAllByTenant(
+    tenantId: string,
+    query: QueryEmisoresDto,
+  ): Promise<PaginatedEmisoresResponseDto> {
     const limit = query.limit ?? 20;
     const cursor = query.cursor;
 
@@ -152,7 +159,6 @@ export class EmisoresService {
       hasMore,
     };
   }
-
 
   /**
    * FIX P3: Acceso seguro a un emisor — verifica que pertenece al tenant del usuario
@@ -278,7 +284,9 @@ export class EmisoresService {
       [tenantId],
     );
 
-    return result.rows.map((row: Record<string, unknown>) => this.mapToResponse(row));
+    return result.rows.map((row: Record<string, unknown>) =>
+      this.mapToResponse(row),
+    );
   }
 
   async create(dto: CreateEmisorDto): Promise<EmisorResponseDto> {
@@ -422,7 +430,10 @@ export class EmisoresService {
       certificateInfo = this.extractCertificateInfo(file, password);
     } catch (error: unknown) {
       // Tipado correcto de error en catch
-      const msg = error instanceof Error ? error.message : 'Error desconocido al procesar el certificado';
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Error desconocido al procesar el certificado';
       throw new BadRequestException(`Error al procesar el certificado: ${msg}`);
     }
 
@@ -513,7 +524,9 @@ export class EmisoresService {
       estado: row.estado as string,
       tenantId: row.tenant_id as string | undefined,
       tieneCertificado: row.tiene_certificado as boolean,
-      certificadoValidoHasta: (row.certificado_valido_hasta as Date)?.toISOString(),
+      certificadoValidoHasta: (
+        row.certificado_valido_hasta as Date
+      )?.toISOString(),
       certificadoSujeto: row.certificado_sujeto as string | undefined,
       createdAt: (row.created_at as Date)?.toISOString(),
       updatedAt: (row.updated_at as Date)?.toISOString(),

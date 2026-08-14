@@ -5,23 +5,23 @@ import { Client } from 'soap';
 @Injectable()
 export class SriSoapFactoryService {
   private readonly logger = new Logger(SriSoapFactoryService.name);
-  
+
   // Cache de clientes en memoria. Clave: tipo_ambiente (ej: 'recepcion_1')
   private clients = new Map<string, Client>();
 
   private readonly WSDL_URLS = {
     recepcion: {
       '1': 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline?wsdl', // Pruebas
-      '2': 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline?wsdl',    // Producción
+      '2': 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline?wsdl', // Producción
     },
     autorizacion: {
       '1': 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl', // Pruebas
-      '2': 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl',    // Producción
+      '2': 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl', // Producción
     },
     consultaContribuyente: {
       '1': 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/ConsultaContribuyente?wsdl', // Pruebas
-      '2': 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/ConsultaContribuyente?wsdl',    // Producción
-    }
+      '2': 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/ConsultaContribuyente?wsdl', // Producción
+    },
   };
 
   /**
@@ -30,7 +30,7 @@ export class SriSoapFactoryService {
    */
   async getRecepcionClient(ambiente: '1' | '2'): Promise<Client> {
     const cacheKey = `recepcion_${ambiente}`;
-    
+
     if (this.clients.has(cacheKey)) {
       return this.clients.get(cacheKey)!;
     }
@@ -40,9 +40,11 @@ export class SriSoapFactoryService {
       throw new Error(`Ambiente no válido para recepción: ${ambiente}`);
     }
 
-    this.logger.log(`Creando nuevo cliente SOAP de Recepción para ambiente ${ambiente}`);
+    this.logger.log(
+      `Creando nuevo cliente SOAP de Recepción para ambiente ${ambiente}`,
+    );
     const client = await soap.createClientAsync(wsdlUrl);
-    
+
     this.clients.set(cacheKey, client);
     return client;
   }
@@ -53,7 +55,7 @@ export class SriSoapFactoryService {
    */
   async getAutorizacionClient(ambiente: '1' | '2'): Promise<Client> {
     const cacheKey = `autorizacion_${ambiente}`;
-    
+
     if (this.clients.has(cacheKey)) {
       return this.clients.get(cacheKey)!;
     }
@@ -63,9 +65,11 @@ export class SriSoapFactoryService {
       throw new Error(`Ambiente no válido para autorización: ${ambiente}`);
     }
 
-    this.logger.log(`Creando nuevo cliente SOAP de Autorización para ambiente ${ambiente}`);
+    this.logger.log(
+      `Creando nuevo cliente SOAP de Autorización para ambiente ${ambiente}`,
+    );
     const client = await soap.createClientAsync(wsdlUrl);
-    
+
     this.clients.set(cacheKey, client);
     return client;
   }
@@ -76,7 +80,7 @@ export class SriSoapFactoryService {
    */
   async getConsultaContribuyenteClient(ambiente: '1' | '2'): Promise<Client> {
     const cacheKey = `consulta_${ambiente}`;
-    
+
     if (this.clients.has(cacheKey)) {
       return this.clients.get(cacheKey)!;
     }
@@ -86,9 +90,11 @@ export class SriSoapFactoryService {
       throw new Error(`Ambiente no válido para consulta: ${ambiente}`);
     }
 
-    this.logger.log(`Creando nuevo cliente SOAP de Consulta Contribuyente para ambiente ${ambiente}`);
+    this.logger.log(
+      `Creando nuevo cliente SOAP de Consulta Contribuyente para ambiente ${ambiente}`,
+    );
     const client = await soap.createClientAsync(wsdlUrl);
-    
+
     this.clients.set(cacheKey, client);
     return client;
   }

@@ -91,12 +91,14 @@ export class SriController {
   @ApiBody({ type: CreateFacturaDto })
   @ApiResponse({
     status: 201,
-    description: 'Factura encolada para procesamiento asíncrono (según configuración del servidor)',
+    description:
+      'Factura encolada para procesamiento asíncrono (según configuración del servidor)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
     status: 200,
-    description: 'Factura procesada sincronamente (según configuración del servidor)',
+    description:
+      'Factura procesada sincronamente (según configuración del servidor)',
     type: FacturaResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
@@ -119,12 +121,14 @@ export class SriController {
   @ApiBody({ type: CreateNotaCreditoDto })
   @ApiResponse({
     status: 201,
-    description: 'Nota de crédito encolada para procesamiento asíncrono (según configuración)',
+    description:
+      'Nota de crédito encolada para procesamiento asíncrono (según configuración)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
     status: 200,
-    description: 'Nota de crédito procesada sincronamente (según configuración)',
+    description:
+      'Nota de crédito procesada sincronamente (según configuración)',
     type: NotaCreditoResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
@@ -146,7 +150,8 @@ export class SriController {
   @ApiBody({ type: CreateNotaDebitoDto })
   @ApiResponse({
     status: 201,
-    description: 'Nota de débito encolada para procesamiento asíncrono (según configuración)',
+    description:
+      'Nota de débito encolada para procesamiento asíncrono (según configuración)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
@@ -173,7 +178,8 @@ export class SriController {
   @ApiBody({ type: CreateRetencionDto })
   @ApiResponse({
     status: 201,
-    description: 'Retención encolada para procesamiento asíncrono (según configuración)',
+    description:
+      'Retención encolada para procesamiento asíncrono (según configuración)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
@@ -200,12 +206,14 @@ export class SriController {
   @ApiBody({ type: CreateGuiaRemisionDto })
   @ApiResponse({
     status: 201,
-    description: 'Guía de remisión encolada para procesamiento asíncrono (según configuración)',
+    description:
+      'Guía de remisión encolada para procesamiento asíncrono (según configuración)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
     status: 200,
-    description: 'Guía de remisión procesada sincronamente (según configuración)',
+    description:
+      'Guía de remisión procesada sincronamente (según configuración)',
     type: GuiaRemisionResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
@@ -604,9 +612,7 @@ export class SriController {
   })
   @ApiResponse({ status: 200, description: 'Datos del contribuyente' })
   @ApiResponse({ status: 404, description: 'No encontrado' })
-  async consultarRuc(
-    @Param('identificacion') identificacion: string,
-  ): Promise<{
+  async consultarRuc(@Param('identificacion') identificacion: string): Promise<{
     existe: boolean;
     identificacion: string;
     razonSocial?: string;

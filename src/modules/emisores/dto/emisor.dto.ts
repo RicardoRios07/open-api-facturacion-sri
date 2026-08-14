@@ -30,7 +30,8 @@ export enum EmisorEstado {
 
 export class QueryEmisoresDto {
   @ApiPropertyOptional({
-    description: 'Cursor (UUID) para paginación keyset (ID del último emisor de la página anterior)',
+    description:
+      'Cursor (UUID) para paginación keyset (ID del último emisor de la página anterior)',
   })
   @IsOptional()
   @IsUUID()
@@ -56,7 +57,9 @@ export class QueryEmisoresDto {
     default: 20,
   })
   @IsOptional()
-  @Transform(({ value }) => value !== undefined ? parseInt(String(value), 10) : 20)
+  @Transform(({ value }) =>
+    value !== undefined ? parseInt(String(value), 10) : 20,
+  )
   @IsInt()
   @Min(1)
   @Max(100)
@@ -245,10 +248,11 @@ export class PaginatedEmisoresResponseDto {
   @ApiProperty({ type: [EmisorResponseDto] })
   data: EmisorResponseDto[];
 
-  @ApiPropertyOptional({ description: 'Cursor para la siguiente página, null si no hay más' })
+  @ApiPropertyOptional({
+    description: 'Cursor para la siguiente página, null si no hay más',
+  })
   nextCursor: string | null;
 
   @ApiProperty({ description: 'Indica si hay más elementos disponibles' })
   hasMore: boolean;
 }
-

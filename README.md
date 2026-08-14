@@ -404,9 +404,12 @@ Copia `.env.example` como punto de partida. Las variables marcadas con ✅ son o
 
 | Variable | Descripción | Ejemplo |
 | -------- | ----------- | ------- |
-| `JWT_SECRET` ✅ | Clave JWT (32+ chars) | `super-secret-32chars!!` |
+| `JWT_SECRET` ✅ | Clave JWT HS256 (32+ chars) | `super-secret-32chars!!` |
 | `ENCRYPTION_KEY` ✅ | Clave AES-256 (32 chars) | `encryption-key-32chars!!` |
 | `ENCRYPTION_SALT` ✅ | Salt de cifrado | `salt-value` |
+| `VENDI_JWKS_URL` | JWKS endpoint de Vendi (RS256) | `https://admin.etherlab.dev/.well-known/jwks.json` |
+| `VENDI_JWT_ISSUER` | Issuer de tokens Vendi | `https://admin.etherlab.dev` |
+| `VENDI_JWT_AUDIENCE` | Audience de tokens Vendi | `https://api-sri.etherlab.dev` |
 
 ### SRI Ecuador
 

@@ -36,17 +36,20 @@ export class TenantsController {
   constructor(private readonly tenantsService: TenantsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Listar tenants con paginación keyset y filtros (solo SUPERADMIN)' })
+  @ApiOperation({
+    summary: 'Listar tenants con paginación keyset y filtros (solo SUPERADMIN)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Lista paginada de tenants',
     type: PaginatedTenantsResponseDto,
   })
   @ApiResponse({ status: 403, description: 'Se requiere rol SUPERADMIN' })
-  async findAll(@Query() query: QueryTenantsDto): Promise<PaginatedTenantsResponseDto> {
+  async findAll(
+    @Query() query: QueryTenantsDto,
+  ): Promise<PaginatedTenantsResponseDto> {
     return this.tenantsService.findAll(query);
   }
-
 
   @Get(':id')
   @ApiOperation({ summary: 'Obtener un tenant por ID (solo SUPERADMIN)' })

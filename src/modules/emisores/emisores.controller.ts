@@ -52,7 +52,6 @@ export class EmisoresController {
     return this.emisoresService.findAllByTenant(user.tenantId!, query);
   }
 
-
   @Get(':id')
   @ApiOperation({ summary: 'Obtener un emisor por ID' })
   @ApiResponse({

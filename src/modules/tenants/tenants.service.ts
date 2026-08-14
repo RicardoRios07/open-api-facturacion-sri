@@ -45,7 +45,9 @@ export class TenantsService {
       conditions.push(`t.estado = $${params.push(query.estado)}`);
     }
 
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
 
     const result = await this.db.query(
       `SELECT t.id, t.nombre, t.plan, t.estado, t.created_at, t.updated_at,
@@ -67,7 +69,6 @@ export class TenantsService {
       hasMore,
     };
   }
-
 
   async findOne(id: string): Promise<TenantResponseDto> {
     const result = await this.db.query(
@@ -156,7 +157,11 @@ export class TenantsService {
       false,
     );
 
-    if (!allowDeleteWithEmisores && tenant.emisoresCount && tenant.emisoresCount > 0) {
+    if (
+      !allowDeleteWithEmisores &&
+      tenant.emisoresCount &&
+      tenant.emisoresCount > 0
+    ) {
       throw new ConflictException(
         `No se puede inactivar el tenant: tiene ${tenant.emisoresCount} emisor(es) activo(s). ` +
           `Configure TENANT_ALLOW_DELETE_WITH_EMISORES=true para forzarlo.`,

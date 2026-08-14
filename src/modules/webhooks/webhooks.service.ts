@@ -73,7 +73,9 @@ export class WebhooksService {
     query += ` ORDER BY created_at DESC`;
 
     const result = await this.db.query(query, params);
-    return result.rows.map((row: Record<string, unknown>) => this.mapToResponse(row));
+    return result.rows.map((row: Record<string, unknown>) =>
+      this.mapToResponse(row),
+    );
   }
 
   /**
@@ -98,7 +100,9 @@ export class WebhooksService {
     query += ` ORDER BY created_at DESC`;
 
     const result = await this.db.query(query, params);
-    return result.rows.map((row: Record<string, unknown>) => this.mapToResponse(row));
+    return result.rows.map((row: Record<string, unknown>) =>
+      this.mapToResponse(row),
+    );
   }
 
   async findOne(id: string): Promise<WebhookResponseDto> {
@@ -116,7 +120,10 @@ export class WebhooksService {
     return this.mapToResponse(result.rows[0]);
   }
 
-  async create(dto: CreateWebhookDto, tenantId?: string): Promise<WebhookResponseDto> {
+  async create(
+    dto: CreateWebhookDto,
+    tenantId?: string,
+  ): Promise<WebhookResponseDto> {
     const secreto = this.generateSecret();
 
     const result = await this.db.query(
@@ -235,10 +242,9 @@ export class WebhooksService {
     const offset = (page - 1) * limit;
 
     const [countResult, dataResult] = await Promise.all([
-      this.db.query(
-        `SELECT COUNT(*) FROM webhook_logs WHERE config_id = $1`,
-        [id],
-      ),
+      this.db.query(`SELECT COUNT(*) FROM webhook_logs WHERE config_id = $1`, [
+        id,
+      ]),
       this.db.query(
         `SELECT id, evento, payload, status_code, respuesta, intento, exitoso, error, tiempo_respuesta_ms, created_at
          FROM webhook_logs
@@ -306,17 +312,13 @@ export class WebhooksService {
         payload,
       };
 
-      await this.webhookQueue.add(
-        `webhook-${evento}`,
-        jobData,
-        {
-          attempts: (config.reintentos_max as number) || 5,
-          backoff: {
-            type: 'exponential',
-            delay: 3000,
-          },
+      await this.webhookQueue.add(`webhook-${evento}`, jobData, {
+        attempts: (config.reintentos_max as number) || 5,
+        backoff: {
+          type: 'exponential',
+          delay: 3000,
         },
-      );
+      });
     }
   }
 
@@ -344,7 +346,9 @@ export class WebhooksService {
     };
   }
 
-  private mapLogToResponse(row: Record<string, unknown>): WebhookLogResponseDto {
+  private mapLogToResponse(
+    row: Record<string, unknown>,
+  ): WebhookLogResponseDto {
     return {
       id: row.id as string,
       evento: row.evento as string,
@@ -359,4 +363,3 @@ export class WebhooksService {
     };
   }
 }
-
