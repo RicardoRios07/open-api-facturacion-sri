@@ -37,6 +37,7 @@ import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import { extractRucFromClaveAcceso } from './utils/clave-acceso.utils';
+import { RideService } from './services/ride.service';
 import {
   CreateFacturaDto,
   FacturaResponseDto,
@@ -55,6 +56,7 @@ import {
   PaginatedComprobantesDto,
   ComprobanteDetalladoDto,
 } from './dto/query-comprobantes.dto';
+import { RespuestaAnulacionDto } from './dto/anulacion-receptor.dto';
 
 @ApiTags('SRI - Facturación Electrónica')
 @ApiBearerAuth('JWT')
@@ -66,6 +68,7 @@ export class SriController {
     private readonly sriService: SriService,
     private readonly emisoresService: EmisoresService,
     private readonly configService: ConfigService,
+    private readonly rideService: RideService,
   ) {}
 
   /**
@@ -260,7 +263,7 @@ export class SriController {
   ): Promise<{ xml: string }> {
     this.logger.log('POST /sri/preview/factura');
     await this.emisoresService.validateRucAccess(dto.emisor.ruc, user);
-    const xml = this.sriService.generarXmlPreview(dto);
+    const xml = await this.sriService.generarXmlPreview(dto);
     return { xml };
   }
 
@@ -432,6 +435,33 @@ export class SriController {
     res.send(xml);
   }
 
+  @Get('comprobantes/:claveAcceso/ride')
+  @ApiOperation({
+    summary: 'Descargar RIDE (PDF) del comprobante',
+    description: 'Genera y descarga el RIDE (Representaciin Impresa del Documento Electrnico) en PDF',
+  })
+  @ApiParam({
+    name: 'claveAcceso',
+    description: 'Clave de acceso de 49 digitos',
+  })
+  @ApiResponse({ status: 200, description: 'RIDE en PDF' })
+  @ApiResponse({ status: 404, description: 'Comprobante no encontrado' })
+  async descargarRide(
+    @Param('claveAcceso') claveAcceso: string,
+    @Res() res: Response,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    this.logger.log(`GET /sri/comprobantes/${claveAcceso}/ride`);
+    await this.validateClaveAccesoAccess(claveAcceso, user);
+    const pdfBuffer = await this.rideService.generarRide(claveAcceso);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="RIDE_${claveAcceso}.pdf"`,
+    );
+    res.send(pdfBuffer);
+  }
+
   @Patch('comprobantes/:claveAcceso/anular')
   @ApiOperation({
     summary: 'Anular comprobante',
@@ -592,5 +622,101 @@ export class SriController {
       await this.emisoresService.validateRucAccess(body.rucEmisor, user);
     }
     return this.sriService.sincronizarConSri(body);
+  }
+
+  // ==========================================
+  // ANULACIÓN CON ACEPTACIÓN DEL RECEPTOR (#5)
+  // ==========================================
+
+  @Post('comprobantes/:claveAcceso/solicitud-anulacion')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Crear solicitud de anulación con aceptación del receptor',
+    description:
+      'Crea una solicitud de anulación para retenciones, NC o ND. El receptor tiene 5 días hábiles para responder.',
+  })
+  @ApiParam({ name: 'claveAcceso', description: 'Clave de acceso de 49 dígitos' })
+  @ApiResponse({ status: 201, description: 'Solicitud creada' })
+  @ApiResponse({ status: 400, description: 'El comprobante no requiere aceptación o no se puede anular' })
+  async crearSolicitudAnulacion(
+    @Param('claveAcceso') claveAcceso: string,
+    @Body() body: { motivo?: string },
+    @CurrentUser() user: JwtPayload,
+  ): Promise<{ id: string; claveAcceso: string; estado: string; mensaje: string }> {
+    this.logger.log(`POST /sri/comprobantes/${claveAcceso}/solicitud-anulacion`);
+    await this.validateClaveAccesoAccess(claveAcceso, user);
+    return this.sriService.crearSolicitudAnulacion(claveAcceso, body.motivo);
+  }
+
+  @Post('anulaciones/:solicitudId/responder')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Responder solicitud de anulación (aceptar/rechazar)',
+    description: 'El receptor acepta o rechaza una solicitud de anulación.',
+  })
+  @ApiParam({ name: 'solicitudId', description: 'ID de la solicitud de anulación' })
+  @ApiResponse({ status: 200, description: 'Respuesta registrada' })
+  @ApiResponse({ status: 400, description: 'La solicitud ya fue respondida o expiró' })
+  async responderSolicitudAnulacion(
+    @Param('solicitudId') solicitudId: string,
+    @Body() dto: RespuestaAnulacionDto,
+  ): Promise<{ solicitudId: string; claveAcceso: string; estado: string; mensaje: string }> {
+    this.logger.log(`POST /sri/anulaciones/${solicitudId}/responder`);
+    return this.sriService.responderSolicitudAnulacion(solicitudId, dto.respuesta, dto.motivo);
+  }
+
+  @Get('anulaciones/:solicitudId')
+  @ApiOperation({
+    summary: 'Consultar estado de solicitud de anulación',
+    description: 'Consulta el estado de una solicitud de anulación.',
+  })
+  @ApiParam({ name: 'solicitudId', description: 'ID de la solicitud de anulación' })
+  @ApiResponse({ status: 200, description: 'Estado de la solicitud' })
+  @ApiResponse({ status: 404, description: 'Solicitud no encontrada' })
+  async consultarSolicitudAnulacion(
+    @Param('solicitudId') solicitudId: string,
+  ): Promise<{
+    id: string;
+    comprobanteClaveAcceso: string;
+    tipoComprobante: string;
+    emisorRuc: string;
+    receptorIdentificacion: string;
+    estado: string;
+    motivoSolicitud?: string;
+    respuestaMotivo?: string;
+    respondidoAt?: string;
+    creadoAt: string;
+  }> {
+    this.logger.log(`GET /sri/anulaciones/${solicitudId}`);
+    return this.sriService.consultarSolicitudAnulacion(solicitudId);
+  }
+
+  // ==========================================
+  // ANULACIÓN MASIVA (#8)
+  // ==========================================
+
+  @Post('comprobantes/anulacion-masiva')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Anulación masiva de comprobantes',
+    description:
+      'Anula múltiples comprobantes (más de 1000) en el mismo mes. Requiere rol SUPERADMIN.',
+  })
+  @ApiResponse({ status: 200, description: 'Anulación masiva completada' })
+  @ApiResponse({ status: 403, description: 'Requiere rol SUPERADMIN' })
+  async anularMasivamente(
+    @Body() body: { clavesAcceso: string[] },
+    @CurrentUser() user: JwtPayload,
+  ): Promise<{
+    procesados: number;
+    anulados: number;
+    errores: number;
+    detalle: Array<{ claveAcceso: string; estado: string; error?: string }>;
+  }> {
+    this.logger.log(`POST /sri/comprobantes/anulacion-masiva - ${body.clavesAcceso.length} comprobantes`);
+    if (user.rol !== UserRole.SUPERADMIN) {
+      throw new ForbiddenException('La anulación masiva requiere rol SUPERADMIN');
+    }
+    return this.sriService.anularMasivamente(body.clavesAcceso);
   }
 }
