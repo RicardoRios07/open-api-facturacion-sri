@@ -42,12 +42,9 @@ async function bootstrap() {
 
   app.enableCors({
     origin: (origin, callback) => {
-      if (!origin) {
-        if (nodeEnv === 'production') {
-          return callback(new Error('CORS: Origin requerido en producción'));
-        }
-        return callback(null, true);
-      }
+      // Permitir requests sin origin: server-to-server (fetch de Node, curl)
+      // no envía Origin — es un header de navegador. Exigirlo rompe el dashboard.
+      if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
       callback(new Error('CORS: Origen no permitido'));
     },
