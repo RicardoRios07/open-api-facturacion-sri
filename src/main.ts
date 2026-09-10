@@ -40,7 +40,8 @@ async function bootstrap() {
 
   app.enableCors({
     origin: (origin, callback) => {
-      // Permitir requests sin origin (Postman, curl, apps móviles nativas)
+      // Permitir requests sin origin: server-to-server (fetch de Node, curl)
+      // no envía Origin — es un header de navegador. Exigirlo rompe el dashboard.
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
       callback(new Error(`CORS: Origen no permitido: ${origin}`));
