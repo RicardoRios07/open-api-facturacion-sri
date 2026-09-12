@@ -114,6 +114,24 @@ export class SriController {
     return this.sriService.emitirFactura(dto);
   }
 
+  @Get('colas/emision/:jobId')
+  @ApiOperation({ summary: 'Consultar estado de una emisión asíncrona' })
+  @ApiParam({ name: 'jobId', description: 'Identificador BullMQ retornado al encolar la emisión' })
+  @ApiResponse({ status: 200, description: 'Estado actual del trabajo de emisión' })
+  @ApiResponse({ status: 404, description: 'Trabajo no encontrado' })
+  async consultarEstadoEmision(
+    @Param('jobId') jobId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const status = await this.sriService.consultarEstadoEmision(jobId);
+    if (!status.emisorRuc) {
+      throw new ForbiddenException('No se pudo verificar el emisor de este trabajo');
+    }
+    await this.emisoresService.validateRucAccess(status.emisorRuc, user);
+    const { emisorRuc: _emisorRuc, ...safeStatus } = status;
+    return safeStatus;
+  }
+
   @Post('emitir/nota-venta')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({

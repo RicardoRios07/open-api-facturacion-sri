@@ -7,10 +7,53 @@
 # Copy .env.docker.example to .env.docker and customize.
 
 services:
+  # ─── PostgreSQL local (aislado; nunca apunta a staging/producción) ───
+  postgres:
+    image: postgres:17-alpine
+    container_name: vendi-local-sri-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-db_sri_local}
+      POSTGRES_USER: ${POSTGRES_USER:-sri_local}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env.docker}
+    ports:
+      - '${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/local-bootstrap.sql:/docker-entrypoint-initdb.d/000-bootstrap.sql:ro
+      - ./database/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ─── Carbone.io (Generación de PDFs) ───
+  carbone:
+    image: carbone/carbone-ee:latest
+    container_name: vendi-local-sri-carbone
+    restart: unless-stopped
+    environment:
+      - CARBONE_EE_STUDIO=true
+    ports:
+      - '${CARBONE_PORT:-4000}:4000'
+    volumes:
+      - ${HOST_TEMPLATES_PATH:-../templates}:/app/template
+    healthcheck:
+      test: ['CMD-SHELL', 'bash -c "echo > /dev/tcp/localhost/4000"']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '5m'
+        max-file: '2'
   # ─── Redis (BullMQ + Cache) ───
   redis:
     image: redis:7-alpine
-    container_name: open-api-redis
+    container_name: vendi-local-sri-redis
     restart: unless-stopped
     command: >
       /bin/sh -c '
@@ -40,7 +83,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: open-api-facturacion-sri
+    container_name: vendi-local-sri-api
     restart: unless-stopped
     env_file:
       - .env.docker
@@ -52,7 +95,7 @@ services:
 
     # Port mapping
     ports:
-      - '${PORT:-3002}:${PORT:-3002}'
+      - '${LOCAL_API_PORT:-3002}:${PORT:-3002}'
 
     # Volume mounts for persistent data
     volumes:
@@ -63,6 +106,8 @@ services:
       - ./database:/app/database:ro
 
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -91,4 +136,6 @@ services:
 
 volumes:
   redis_data:
+    driver: local
+  postgres_data:
     driver: local

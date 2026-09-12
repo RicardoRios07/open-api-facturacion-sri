@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { extractRucFromClaveAcceso } from './utils/clave-acceso.utils';
@@ -77,7 +77,53 @@ export class SriService {
     };
   }
 
-  generarXmlPreview(dto: CreateFacturaDto): string {
+  /**
+   * Consulta un trabajo BullMQ sin exponer el DTO ni el stack interno.
+   * La autorización por RUC/tenant se aplica en el controlador antes de
+   * entregar la respuesta al consumidor.
+   */
+  async consultarEstadoEmision(jobId: string): Promise<{
+    jobId: string;
+    queueState: string;
+    estado: string;
+    emisorRuc: string | null;
+    claveAcceso?: string;
+    error?: string;
+  }> {
+    if (!/^[a-zA-Z0-9:_-]{1,128}$/.test(jobId)) {
+      throw new BadRequestException('Identificador de trabajo inválido');
+    }
+
+    const job = await this.emisionQueue.getJob(jobId);
+    if (!job) throw new NotFoundException('Trabajo de emisión no encontrado');
+
+    const queueState = await job.getState();
+    const payload = job.data as { dto?: { emisor?: { ruc?: string } } };
+    const emisorRuc = payload.dto?.emisor?.ruc ?? null;
+
+    if (queueState === 'completed') {
+      const result = (job.returnvalue ?? {}) as Record<string, unknown>;
+      return {
+        jobId,
+        queueState,
+        estado: typeof result.estado === 'string' ? result.estado : 'COMPLETADO',
+        emisorRuc,
+        claveAcceso: typeof result.claveAcceso === 'string' ? result.claveAcceso : undefined,
+      };
+    }
+    if (queueState === 'failed') {
+      return {
+        jobId,
+        queueState,
+        estado: 'FALLIDO',
+        emisorRuc,
+        error: job.failedReason?.slice(0, 300) || 'La emisión no se pudo completar',
+      };
+    }
+    return { jobId, queueState, estado: 'EN_COLA', emisorRuc };
+  }
+
+  async generarXmlPreview(dto: CreateFacturaDto): Promise<string> {
     return this.facturaService.generarXmlPreview(dto);
   }
 
