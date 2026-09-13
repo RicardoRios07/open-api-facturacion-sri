@@ -379,6 +379,9 @@ export class SriController {
     xmlFirmado: string;
   }> {
     this.logger.log('POST /sri/debug/factura-firmada');
+    if (user.rol !== UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Solo SUPERADMIN puede generar XML firmado de depuración');
+    }
     if (this.configService.get('NODE_ENV') === 'production') {
       throw new ForbiddenException('Endpoint deshabilitado en producción');
     }

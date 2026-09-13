@@ -909,7 +909,7 @@ describe('SriService — Consultas', () => {
     it('U-REI-09: estado EN PROCESO permite reintentar', async () => {
       repository.findComprobanteByClaveAcceso.mockResolvedValue({
         id: 'comp-1',
-        estado: 'EN PROCESO',
+        estado: 'EN_PROCESO',
         fecha_emision: '2026-02-07',
       } as any);
       repository.findXmlByComprobanteId.mockResolvedValue({

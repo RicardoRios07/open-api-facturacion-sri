@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { SriController } from './sri.controller';
 import { SriService } from './sri.service';
 import { EmisoresService } from '../emisores/emisores.service';
-import { RideService } from './services/ride.service';
 import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
 import {
   QueryComprobantesDto,
@@ -76,7 +75,6 @@ describe('SriController — Consultas (Multi-tenant + DTO)', () => {
             }),
           },
         },
-        { provide: RideService, useValue: { generarRide: jest.fn() } },
       ],
     }).compile();
 

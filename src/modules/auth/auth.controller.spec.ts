@@ -132,12 +132,12 @@ describe('AuthController', () => {
   });
 
   describe('GET /auth/me', () => {
-    it('debe retornar los datos frescos del usuario autenticado', async () => {
+    it('debe retornar los datos del JWT autenticado', async () => {
       const profile = { id: mockUser.sub, email: mockUser.email, rol: mockUser.rol, tenantId: mockUser.tenantId };
       authService.getProfile.mockResolvedValue(profile as any);
       const result = await controller.getProfile(mockUser);
 
-      expect(authService.getProfile).toHaveBeenCalledWith(mockUser.sub);
+      expect(authService.getProfile).not.toHaveBeenCalled();
       expect(result).toEqual(profile);
     });
 

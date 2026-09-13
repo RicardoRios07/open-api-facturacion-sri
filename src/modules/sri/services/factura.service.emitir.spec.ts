@@ -434,11 +434,11 @@ describe('FacturaService — Emisión', () => {
   // ==========================================
   // U-FAC-16: generarXmlPreview sin secuencial
   // ==========================================
-  it('U-FAC-16: generarXmlPreview sin secuencial → lanza BadRequestException', async () => {
+  it('U-FAC-16: generarXmlPreview sin secuencial → lanza BadRequestException', () => {
     const dto = createValidDto();
     delete dto.secuencial;
 
-    await expect(service.generarXmlPreview(dto)).rejects.toThrow(BadRequestException);
+    expect(() => service.generarXmlPreview(dto)).toThrow(BadRequestException);
   });
 
   // ==========================================

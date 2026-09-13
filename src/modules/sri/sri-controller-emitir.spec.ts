@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { SriController } from './sri.controller';
 import { SriService } from './sri.service';
 import { EmisoresService } from '../emisores/emisores.service';
-import { RideService } from './services/ride.service';
 import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
 import { CreateFacturaDto } from './dto';
 import { TipoIdentificacion, FormaPago } from './constants';
@@ -95,7 +94,6 @@ describe('SriController — Emisión Factura', () => {
             findByTenantId: jest.fn(),
           },
         },
-        { provide: RideService, useValue: { generarRide: jest.fn() } },
         {
           provide: ConfigService,
           useValue: {
@@ -161,7 +159,7 @@ describe('SriController — Emisión Factura', () => {
   // U-CTRL-EMI-04: previewFactura exitoso
   // ==========================================
   it('U-CTRL-EMI-04: previewFactura valida RUC y retorna XML', async () => {
-    sriService.generarXmlPreview.mockResolvedValue('<factura>preview</factura>');
+    sriService.generarXmlPreview.mockReturnValue('<factura>preview</factura>');
 
     const result = await controller.previewFactura(createValidDto(), adminUser);
 
