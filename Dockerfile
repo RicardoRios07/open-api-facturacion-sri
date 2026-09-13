@@ -22,6 +22,9 @@ COPY . .
 # Build the application
 RUN npm run build
 
+# Remove devDependencies after build
+RUN npm prune --production
+
 # -----------------------------
 # Stage 2: Production
 # -----------------------------
@@ -43,10 +46,6 @@ COPY --from=builder /app/package*.json ./
 # Copy production dependencies from builder
 COPY --from=builder /app/node_modules ./node_modules
 
-# La imagen final no necesita Jest/TypeScript; la etapa builder los conserva
-# para ejecutar pruebas de CI o locales.
-RUN npm prune --omit=dev
-
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
@@ -54,14 +53,6 @@ COPY --from=builder /app/dist ./dist
 RUN mkdir -p /data/templates /data/pdfs /data/certs /data/xmls \
     /data/pdfs/con_firma /data/pdfs/others /data/pdfs/documents /data/pdfs/images
 
-# Create non-root user for least privilege (CWE-250, OWASP A05:2021)
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup && \
-    chown -R appuser:appgroup /app /data
-
-# Copy entrypoint script (fixes bind-mount permissions then drops to appuser)
-COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
 # Expose the application port
 EXPOSE 3001
 
