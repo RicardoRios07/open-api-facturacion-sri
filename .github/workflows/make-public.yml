@@ -1,0 +1,16 @@
+name: Make GHCR Public
+on: workflow_dispatch
+permissions:
+  packages: write
+jobs:
+  public:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/user/packages/container/open-api-facturacion-sri \
+            -d '{"visibility":"public"}' -v
+          echo "---check---"
+          curl -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/user/packages/container/open-api-facturacion-sri 2>&1 | head -20
