@@ -29,3 +29,6 @@ jobs:
           tags: |
             ghcr.io/ricardorios07/open-api-facturacion-sri:chamba-staging
             ghcr.io/ricardorios07/open-api-facturacion-sri:chamba-staging-${{ github.sha }}
+      - name: Make package public
+        run: |
+          curl -s -X PATCH -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" https://api.github.com/user/packages/container/open-api-facturacion-sri -d '{"visibility":"public"}' || true
