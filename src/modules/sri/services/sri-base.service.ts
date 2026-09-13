@@ -5,6 +5,7 @@ import {
   CatalogoValidatorService,
 } from './index';
 import { Ambiente } from '../constants';
+import { DatabaseService } from '../../../database';
 
 /**
  * Servicio base con métodos compartidos entre todos los tipos de comprobante SRI.
@@ -14,10 +15,15 @@ import { Ambiente } from '../constants';
 export class SriBaseService {
   private readonly logger = new Logger(SriBaseService.name);
 
+  private proveedorRucCache: string | null = null;
+  private proveedorRucCacheTime = 0;
+  private static readonly PROVEEDOR_RUC_TTL_MS = 5 * 60 * 1000;
+
   constructor(
     private readonly configService: ConfigService,
     private readonly identificacionValidator: IdentificacionValidatorService,
     private readonly catalogoValidator: CatalogoValidatorService,
+    private readonly db: DatabaseService,
   ) {}
 
   /**
@@ -194,5 +200,53 @@ export class SriBaseService {
     this.logger.log(
       `Documento sustento ${codDocSustento} validado contra catálogo`,
     );
+  }
+
+  /**
+   * Obtiene el RUC configurado para el proveedor del sistema y lo conserva
+   * temporalmente en memoria para no consultar la base de datos por documento.
+   */
+  private async getProveedorRuc(): Promise<string | null> {
+    const now = Date.now();
+    if (
+      this.proveedorRucCache !== null &&
+      now - this.proveedorRucCacheTime < SriBaseService.PROVEEDOR_RUC_TTL_MS
+    ) {
+      return this.proveedorRucCache;
+    }
+
+    try {
+      const result = await this.db.query(
+        "SELECT valor FROM sistema_config WHERE clave = 'PROVEEDOR_RUC'",
+      );
+      const ruc = result.rows.length > 0 ? result.rows[0].valor : null;
+
+      this.proveedorRucCache =
+        typeof ruc === 'string' && /^\d{13}$/.test(ruc) ? ruc : null;
+      this.proveedorRucCacheTime = now;
+      return this.proveedorRucCache;
+    } catch (error) {
+      this.logger.error(
+        `Error consultando PROVEEDOR_RUC desde sistema_config: ${(error as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Incluye el RUC del proveedor del sistema una sola vez en infoAdicional.
+   */
+  async injectProveedorRucInfoAdicional(
+    infoAdicional: { nombre: string; valor: string }[],
+  ): Promise<{ nombre: string; valor: string }[]> {
+    const ruc = await this.getProveedorRuc();
+    if (!ruc || infoAdicional.some((item) => item.nombre === 'RUCProveedorSistema')) {
+      return infoAdicional;
+    }
+
+    return [
+      ...infoAdicional,
+      { nombre: 'RUCProveedorSistema', valor: ruc },
+    ];
   }
 }

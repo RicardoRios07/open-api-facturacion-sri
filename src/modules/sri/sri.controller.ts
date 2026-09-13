@@ -319,7 +319,7 @@ export class SriController {
   ): Promise<{ xml: string }> {
     this.logger.log('POST /sri/preview/factura');
     await this.emisoresService.validateRucAccess(dto.emisor.ruc, user);
-    const xml = this.sriService.generarXmlPreview(dto);
+    const xml = await this.sriService.generarXmlPreview(dto);
     return { xml };
   }
 
