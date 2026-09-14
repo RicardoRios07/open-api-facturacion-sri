@@ -36,6 +36,7 @@ describe('SriService — Consultas', () => {
             findComprobanteConDetalles: jest.fn(),
             findComprobanteByClaveAcceso: jest.fn(),
             findDetallesByComprobanteId: jest.fn(),
+            findTotalesByComprobanteId: jest.fn(),
             findInfoAdicionalByComprobanteId: jest.fn(),
             findXmlAutorizado: jest.fn(),
             findXmlByComprobanteId: jest.fn(),
@@ -541,6 +542,10 @@ describe('SriService — Consultas', () => {
       estado: 'AUTORIZADO',
       fecha_autorizacion: '2026-02-07T12:00:00Z',
       num_autorizacion: 'AUTH-1',
+      doc_modificado_tipo: '01',
+      doc_modificado_numero: '001-001-000000042',
+      doc_modificado_fecha: '2026-02-06',
+      motivo: 'DEVOLUCIÓN DE PRODUCTO',
       created_at: new Date(),
       updated_at: new Date(),
       xml_disponible: true,
@@ -565,6 +570,15 @@ describe('SriService — Consultas', () => {
     it('U-DET-01: clave existente retorna objeto con detalles e infoAdicional', async () => {
       repository.findComprobanteConDetalles.mockResolvedValue(mockComprobante);
       repository.findDetallesByComprobanteId.mockResolvedValue(mockDetalles);
+      repository.findTotalesByComprobanteId.mockResolvedValue([
+        {
+          codigo: '2',
+          codigo_porcentaje: '4',
+          base_imponible: '100.00',
+          tarifa: '15.00',
+          valor: '15.00',
+        },
+      ]);
       repository.findInfoAdicionalByComprobanteId.mockResolvedValue(mockInfoAdicional);
 
       const result = await service.obtenerComprobante(mockComprobante.clave_acceso);
@@ -576,6 +590,20 @@ describe('SriService — Consultas', () => {
       expect(result!.detalles[0].codigoPrincipal).toBe('PROD001');
       expect(result!.detalles[0].cantidad).toBe(2);
       expect(result!.infoAdicional).toEqual(mockInfoAdicional);
+      expect(result!.totalImpuestos).toBe(15);
+      expect(result!.totalConImpuestos).toEqual([
+        {
+          codigo: '2',
+          codigoPorcentaje: '4',
+          baseImponible: 100,
+          tarifa: 15,
+          valor: 15,
+        },
+      ]);
+      expect(result!.documentoModificadoTipo).toBe('01');
+      expect(result!.documentoModificadoNumero).toBe('001-001-000000042');
+      expect(result!.documentoModificadoFecha).toBe('2026-02-06');
+      expect(result!.motivo).toBe('DEVOLUCIÓN DE PRODUCTO');
       expect(result!.xmlDisponible).toBe(true);
     });
 
