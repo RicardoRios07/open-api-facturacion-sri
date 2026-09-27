@@ -27,6 +27,28 @@ export class StatusController {
   ) {}
 
   /**
+   * GET /health
+   * Liveness barato: solo dependencias locales (DB, Redis, memoria).
+   * Es el target del HEALTHCHECK del Dockerfile (cada 30s). Por diseño NO
+   * llama al SRI ni lee templates, para no generar tráfico externo ni ruido de logs.
+   */
+  @Get('health')
+  @HealthCheck()
+  @ApiOperation({ summary: 'Health check local (sin dependencias externas)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Estado de DB, Redis y memoria',
+  })
+  async getHealth() {
+    return this.health.check([
+      () => this.db.isHealthy('database'),
+      () => this.redis.isHealthy('redis'),
+      () => this.memory.checkHeap('memory_heap', this.memoryHeapLimit()),
+      () => this.memory.checkRSS('memory_rss', this.memoryRssLimit()),
+    ]);
+  }
+
+  /**
    * GET /status
    * Verifica Redis health check, memory thresholds parametrizables y SRI connectivity health check
    */
@@ -38,16 +60,6 @@ export class StatusController {
     description: 'Estado del servidor, DB, Redis, memoria y conectividad SRI',
   })
   async getStatus() {
-    // Thresholds de memoria desde configuración
-    const heapMb = this.configService.get<number>(
-      'healthChecks.memoryHeapMb',
-      150,
-    );
-    const rssMb = this.configService.get<number>(
-      'healthChecks.memoryRssMb',
-      300,
-    );
-
     // Info base estática
     const baseInfo = this.statusService.getStatus();
 
@@ -55,8 +67,8 @@ export class StatusController {
     const healthCheck = await this.health.check([
       () => this.db.isHealthy('database'),
       () => this.redis.isHealthy('redis'),
-      () => this.memory.checkHeap('memory_heap', heapMb * 1024 * 1024),
-      () => this.memory.checkRSS('memory_rss', rssMb * 1024 * 1024),
+      () => this.memory.checkHeap('memory_heap', this.memoryHeapLimit()),
+      () => this.memory.checkRSS('memory_rss', this.memoryRssLimit()),
       () => this.sri.isHealthy('sri_soap'),
     ]);
 
@@ -75,5 +87,21 @@ export class StatusController {
   @ApiOperation({ summary: 'Redirigir a status' })
   root() {
     // Redirect handled by @Redirect decorator
+  }
+
+  private memoryHeapLimit(): number {
+    const heapMb = this.configService.get<number>(
+      'healthChecks.memoryHeapMb',
+      150,
+    );
+    return heapMb * 1024 * 1024;
+  }
+
+  private memoryRssLimit(): number {
+    const rssMb = this.configService.get<number>(
+      'healthChecks.memoryRssMb',
+      300,
+    );
+    return rssMb * 1024 * 1024;
   }
 }
