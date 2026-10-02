@@ -85,6 +85,7 @@ export default () => ({
     jwksUri: optionalEnv('VENDI_JWKS_URL', 'https://admin.etherlab.dev/.well-known/jwfs.json'),
     issuer: optionalEnv('VENDI_JWT_ISSUER', 'https://admin.etherlab.dev'),
     audience: optionalEnv('VENDI_JWT_AUDIENCE', 'https://api-sri.etherlab.dev'),
+    bindingSecret: requireEnv('VENDI_SRI_BINDING_SECRET'),
   },
 
   // Rate Limiting

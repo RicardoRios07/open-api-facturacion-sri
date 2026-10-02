@@ -231,6 +231,16 @@ export class AuthService {
    * Valida un payload JWT y retorna el usuario (usado por JwtStrategy)
    */
   async validatePayload(payload: JwtPayload): Promise<JwtPayload> {
+    // Identidad de servicio Vendi: se autentica por JWT HS256 compartido y
+    // scope/audience en el endpoint interno; no representa a un usuario humano.
+    if (
+      payload.iss === 'vendi-dashboard' &&
+      payload.aud === 'open-sri-tenant-bindings' &&
+      payload.scope === 'tenant:binding:write'
+    ) {
+      return payload;
+    }
+
     const user = await this.db.queryOne<{ id: string; activo: boolean }>(
       'SELECT id, activo FROM usuarios WHERE id = $1',
       [payload.sub],
@@ -245,6 +255,27 @@ export class AuthService {
       throw new UnauthorizedException(
         'Token de refresco no permitido para acceder a recursos',
       );
+    }
+
+    // Vendi identifica tenants por slug (p. ej. "almafit"), mientras que
+    // Open-SRI usa el UUID interno de `tenants` en todas las FK. Resolver la
+    // identidad aquí centraliza el mapeo y evita que cada controlador haga
+    // consultas UUID con un slug (que provoca errores 22P02).
+    if (payload.tenantId) {
+      const tenant = await this.db.queryOne<{ id: string }>(
+        `SELECT id
+         FROM tenants
+         WHERE estado = 'ACTIVO'
+           AND (id::text = $1 OR vendi_tenant_key = $1)
+         LIMIT 1`,
+        [payload.tenantId],
+      );
+
+      if (!tenant) {
+        throw new UnauthorizedException('Tenant no registrado en Open-SRI');
+      }
+
+      return { ...payload, tenantId: tenant.id };
     }
 
     return payload;

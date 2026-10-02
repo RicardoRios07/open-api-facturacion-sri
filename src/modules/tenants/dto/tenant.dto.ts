@@ -7,6 +7,9 @@ import {
   Min,
   Max,
   IsUUID,
+  Matches,
+  MaxLength,
+  MinLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type, Transform } from 'class-transformer';
@@ -78,6 +81,27 @@ export class CreateTenantDto {
   @IsEnum(TenantPlan, {
     message: `plan debe ser uno de: ${Object.values(TenantPlan).join(', ')}`,
   })
+  plan?: TenantPlan;
+}
+
+export class ProvisionTenantDto {
+  @ApiProperty({ description: 'Identificador estable del tenant en Vendi' })
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => String(value).trim().toLowerCase())
+  @MinLength(2)
+  @MaxLength(120)
+  @Matches(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/)
+  vendiTenantKey: string;
+
+  @ApiProperty({ description: 'Nombre de la empresa en Vendi' })
+  @IsString()
+  @IsNotEmpty()
+  nombre: string;
+
+  @ApiPropertyOptional({ enum: TenantPlan })
+  @IsOptional()
+  @IsEnum(TenantPlan)
   plan?: TenantPlan;
 }
 

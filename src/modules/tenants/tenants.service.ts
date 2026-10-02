@@ -15,6 +15,7 @@ import {
   QueryTenantsDto,
   PaginatedTenantsResponseDto,
   TenantEstado,
+  ProvisionTenantDto,
 } from './dto';
 
 @Injectable()
@@ -104,6 +105,31 @@ export class TenantsService {
 
     this.logger.log(`Tenant creado: ${dto.nombre}`);
     return this.mapToResponse(result.rows[0]);
+  }
+
+  async ensureVendiTenantBinding(dto: ProvisionTenantDto): Promise<TenantResponseDto> {
+    const vendiTenantKey = dto.vendiTenantKey.trim().toLowerCase();
+    const existing = await this.db.queryOne<any>(
+      `SELECT id, nombre, plan, estado, created_at, updated_at FROM tenants
+       WHERE vendi_tenant_key = $1 LIMIT 1`, [vendiTenantKey]);
+    if (existing) return this.mapToResponse(existing);
+
+    try {
+      const result = await this.db.query(
+        `INSERT INTO tenants (vendi_tenant_key, nombre, plan, estado)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, nombre, plan, estado, created_at, updated_at`,
+        [vendiTenantKey, dto.nombre.trim(), dto.plan ?? 'BASICO', TenantEstado.ACTIVO],
+      );
+      return this.mapToResponse(result.rows[0]);
+    } catch (error: any) {
+      if (error?.code !== '23505') throw error;
+      const concurrent = await this.db.queryOne<any>(
+        `SELECT id, nombre, plan, estado, created_at, updated_at FROM tenants
+         WHERE vendi_tenant_key = $1 LIMIT 1`, [vendiTenantKey]);
+      if (!concurrent) throw error;
+      return this.mapToResponse(concurrent);
+    }
   }
 
   async update(id: string, dto: UpdateTenantDto): Promise<TenantResponseDto> {
