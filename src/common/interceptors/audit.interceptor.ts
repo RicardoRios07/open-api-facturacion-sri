@@ -46,6 +46,9 @@ export class AuditInterceptor implements NestInterceptor {
 
     const startTime = Date.now();
     const user = (request as Request & { user?: RequestUser }).user;
+    const isServiceIdentity = user?.sub === 'vendi-dashboard';
+    const auditUserId = isServiceIdentity ? undefined : user?.sub;
+    const auditUserEmail = isServiceIdentity ? 'vendi-dashboard' : user?.email;
     const url = request.url || '';
     const recurso = this.extractRecurso(url);
     const recursoId = request.params?.['id'] || request.params?.['claveAcceso'];
@@ -56,8 +59,8 @@ export class AuditInterceptor implements NestInterceptor {
         const duracionMs = Date.now() - startTime;
         // Fire-and-forget — no bloquear la respuesta
         void this.auditService.log({
-          usuarioId: user?.sub,
-          usuarioEmail: user?.email,
+          usuarioId: auditUserId,
+          usuarioEmail: auditUserEmail,
           tenantId: user?.tenantId,
           ipAddress: request.ip || request.socket?.remoteAddress,
           userAgent: request.headers['user-agent'],
@@ -77,8 +80,8 @@ export class AuditInterceptor implements NestInterceptor {
         const duracionMs = Date.now() - startTime;
         // Registrar operaciones fallidas también
         void this.auditService.log({
-          usuarioId: user?.sub,
-          usuarioEmail: user?.email,
+          usuarioId: auditUserId,
+          usuarioEmail: auditUserEmail,
           tenantId: user?.tenantId,
           ipAddress: request.ip || request.socket?.remoteAddress,
           userAgent: request.headers['user-agent'],
