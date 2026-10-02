@@ -102,6 +102,9 @@ export class JwtPayload {
   rol: UserRole;
   tenantId: string | null;
   type?: 'access' | 'refresh';
+  scope?: string;
+  aud?: string;
+  iss?: string;
   iat?: number;
   exp?: number;
 }

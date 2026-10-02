@@ -38,8 +38,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             });
             client(_request, rawJwtToken, done);
           } else {
-            // Internal user token → HS256 with secret
-            const secret = configService.get<string>('jwt.secret');
+            // Binding Vendi → Open-SRI usa un secreto HS256 dedicado.
+            // Los tokens internos de usuarios continúan usando jwt.secret.
+            const secret = payload.iss === 'vendi-dashboard'
+              ? configService.get<string>('vendi.bindingSecret')
+              : configService.get<string>('jwt.secret');
             if (!secret) {
               done(new Error('JWT_SECRET not configured'));
               return;

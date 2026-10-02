@@ -683,6 +683,7 @@ CREATE TABLE public.sistema_config (
 
 CREATE TABLE public.tenants (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
+    vendi_tenant_key character varying(120),
     nombre character varying(300) NOT NULL,
     plan character varying(50) DEFAULT 'BASICO'::character varying,
     estado character varying(20) DEFAULT 'ACTIVO'::character varying,
@@ -1345,6 +1346,9 @@ ALTER TABLE ONLY public.sistema_config
 
 ALTER TABLE ONLY public.tenants
     ADD CONSTRAINT tenants_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.tenants
+    ADD CONSTRAINT tenants_vendi_tenant_key_key UNIQUE (vendi_tenant_key);
 
 
 --
