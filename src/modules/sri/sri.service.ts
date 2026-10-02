@@ -464,11 +464,18 @@ export class SriService {
       return null;
     }
 
-    const detalles = await this.repository.findDetallesByComprobanteId(
-      comprobante.id,
-    );
-    const infoAdicional =
-      await this.repository.findInfoAdicionalByComprobanteId(comprobante.id);
+    const [detalles, infoAdicional, totales = []] = await Promise.all([
+      this.repository.findDetallesByComprobanteId(comprobante.id),
+      this.repository.findInfoAdicionalByComprobanteId(comprobante.id),
+      this.repository.findTotalesByComprobanteId(comprobante.id),
+    ]);
+    const totalConImpuestos = totales.map((total) => ({
+      codigo: total.codigo,
+      codigoPorcentaje: total.codigo_porcentaje,
+      baseImponible: parseFloat(total.base_imponible) || 0,
+      tarifa: parseFloat(total.tarifa) || 0,
+      valor: parseFloat(total.valor) || 0,
+    }));
 
     return {
       id: comprobante.id,
@@ -487,11 +494,19 @@ export class SriService {
       identificacionComprador: comprobante.identificacion_comprador,
       razonSocialComprador: comprobante.razon_social_comprador,
       subtotal: parseFloat(comprobante.subtotal) || 0,
-      totalImpuestos: parseFloat(comprobante.total_impuestos) || 0,
+      totalImpuestos: totalConImpuestos.reduce(
+        (sum, impuesto) => sum + impuesto.valor,
+        0,
+      ),
+      totalConImpuestos,
       total: parseFloat(comprobante.total) || 0,
       estado: comprobante.estado,
       fechaAutorizacion: comprobante.fecha_autorizacion,
       numAutorizacion: comprobante.num_autorizacion,
+      documentoModificadoTipo: comprobante.doc_modificado_tipo,
+      documentoModificadoNumero: comprobante.doc_modificado_numero,
+      documentoModificadoFecha: comprobante.doc_modificado_fecha,
+      motivo: comprobante.motivo,
       createdAt: comprobante.created_at,
       updatedAt: comprobante.updated_at,
       detalles: detalles.map((d) => ({

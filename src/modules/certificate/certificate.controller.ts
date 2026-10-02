@@ -40,7 +40,7 @@ import { EncryptionService } from '../../common/services/encryption.service';
 import { XmlSignerService } from '../sri/services/xml-signer.service';
 import { EmisoresService } from '../emisores/emisores.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { JwtPayload } from '../auth/dto/auth.dto';
+import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
 
 @ApiTags('Certificates')
 @ApiBearerAuth('JWT')
@@ -69,21 +69,31 @@ export class CertificateController {
     description: 'Elementos por página',
   })
   @ApiResponse({ status: 200, description: 'Lista de certificados' })
-  listCertificates(
+  async listCertificates(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @CurrentUser() user?: JwtPayload,
   ) {
     const options: { page?: number; limit?: number } = {};
     if (page) options.page = parseInt(page);
     if (limit) options.limit = parseInt(limit);
 
     const result = this.certificateService.listCertificates(options);
+    const ownership = user?.rol === UserRole.SUPERADMIN && !user.tenantId
+      ? await this.db.query('SELECT certificado_nombre FROM emisores WHERE certificado_nombre IS NOT NULL')
+      : await this.db.query(
+          `SELECT certificado_nombre FROM emisores
+           WHERE tenant_id = $1 AND estado = 'ACTIVO' AND certificado_nombre IS NOT NULL`,
+          [user?.tenantId],
+        );
+    const allowed = new Set(ownership.rows.map((row) => row.certificado_nombre));
+    const certificates = result.certificates.filter((cert) => allowed.has(cert.name));
 
     return {
       success: true,
       data: {
-        certificates: result.certificates,
-        total: result.total,
+        certificates,
+        total: certificates.length,
         pagination: result.pagination,
       },
     };
@@ -98,14 +108,28 @@ export class CertificateController {
   @ApiParam({ name: 'fileName', description: 'Nombre del archivo .p12' })
   @ApiResponse({ status: 200, description: 'Certificado eliminado' })
   @ApiResponse({ status: 404, description: 'Certificado no encontrado' })
-  async deleteCertificate(@Param('fileName') fileName: string) {
+  async deleteCertificate(
+    @Param('fileName') fileName: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
     if (!fileName || !fileName.toLowerCase().endsWith('.p12')) {
       throw new BadRequestException(
         'Nombre de archivo inválido. Debe tener extensión .p12',
       );
     }
 
-    if (!this.certificateService.certificateExists(fileName)) {
+    const ownership = user.rol === UserRole.SUPERADMIN && !user.tenantId
+      ? await this.db.query(
+          'SELECT id FROM emisores WHERE certificado_nombre = $1 LIMIT 1',
+          [fileName],
+        )
+      : await this.db.query(
+          `SELECT id FROM emisores
+           WHERE certificado_nombre = $1 AND tenant_id = $2 AND estado = 'ACTIVO'
+           LIMIT 1`,
+          [fileName, user.tenantId],
+        );
+    if (!this.certificateService.certificateExists(fileName) || ownership.rows.length === 0) {
       throw new NotFoundException(`El certificado ${fileName} no existe`);
     }
 
@@ -121,8 +145,9 @@ export class CertificateController {
         certificado_updated_at = NULL,
         updated_at = NOW()
        WHERE certificado_nombre = $1
+         AND ($2::text IS NULL OR tenant_id = $2)
        RETURNING id, ruc`,
-      [fileName],
+      [fileName, user.rol === UserRole.SUPERADMIN && !user.tenantId ? null : user.tenantId],
     );
 
     // Eliminar archivo físico
@@ -263,6 +288,7 @@ export class CertificateController {
 
         const bindingResult = await this.bindCertificateToEmisor(
           body.ruc,
+          user.tenantId,
           file.filename,
           password,
           validation.expiryDate,
@@ -324,6 +350,7 @@ export class CertificateController {
    */
   private async bindCertificateToEmisor(
     ruc: string,
+    tenantId: string | null,
     fileName: string,
     password: string,
     expiryDate: Date,
@@ -333,8 +360,9 @@ export class CertificateController {
     try {
       // Check if emisor exists
       const emisor = await this.db.queryOne<any>(
-        'SELECT id FROM emisores WHERE ruc = $1',
-        [ruc],
+        `SELECT id FROM emisores
+         WHERE ruc = $1 AND ($2::text IS NULL OR tenant_id::text = $2)`,
+        [ruc, tenantId],
       );
 
       if (!emisor) {
@@ -353,8 +381,8 @@ export class CertificateController {
           certificado_sujeto = $4,
           certificado_p12 = $5,
           certificado_updated_at = NOW()
-        WHERE ruc = $6`,
-        [fileName, encryptedPassword, expiryDate, subject, p12Buffer, ruc],
+        WHERE ruc = $6 AND ($7::text IS NULL OR tenant_id::text = $7)`,
+        [fileName, encryptedPassword, expiryDate, subject, p12Buffer, ruc, tenantId],
       );
 
       // FIX P4: Invalidar caché del certificado en XmlSignerService
@@ -379,11 +407,29 @@ export class CertificateController {
   @ApiOperation({ summary: 'Obtener información de un certificado' })
   @ApiParam({ name: 'fileName', description: 'Nombre del archivo .p12' })
   @ApiResponse({ status: 200, description: 'Información del certificado' })
-  getCertificateInfo(@Param('fileName') fileName: string) {
+  async getCertificateInfo(
+    @Param('fileName') fileName: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
     if (!fileName || !fileName.toLowerCase().endsWith('.p12')) {
       throw new BadRequestException(
         'Nombre de archivo inválido. Debe tener extensión .p12',
       );
+    }
+
+    const ownership = user.rol === UserRole.SUPERADMIN && !user.tenantId
+      ? await this.db.query(
+          'SELECT id FROM emisores WHERE certificado_nombre = $1 LIMIT 1',
+          [fileName],
+        )
+      : await this.db.query(
+          `SELECT id FROM emisores
+           WHERE certificado_nombre = $1 AND tenant_id = $2 AND estado = 'ACTIVO'
+           LIMIT 1`,
+          [fileName, user.tenantId],
+        );
+    if (ownership.rows.length === 0) {
+      throw new NotFoundException(`El certificado ${fileName} no existe`);
     }
 
     const certInfo = this.certificateService.getCertificateInfo(fileName);

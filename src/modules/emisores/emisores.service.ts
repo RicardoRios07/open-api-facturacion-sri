@@ -170,7 +170,7 @@ export class EmisoresService {
     const emisor = await this.findOne(id);
 
     // SUPERADMIN puede ver cualquier emisor
-    if (user.rol === UserRole.SUPERADMIN) {
+    if (user.rol === UserRole.SUPERADMIN && !user.tenantId) {
       return emisor;
     }
 
@@ -208,7 +208,7 @@ export class EmisoresService {
   ): Promise<EmisorResponseDto> {
     const emisor = await this.findOne(emisorId);
 
-    if (user.rol === UserRole.SUPERADMIN) {
+    if (user.rol === UserRole.SUPERADMIN && !user.tenantId) {
       return emisor;
     }
 
@@ -240,7 +240,7 @@ export class EmisoresService {
       throw new NotFoundException(`Emisor con RUC ${ruc} no encontrado`);
     }
 
-    if (user.rol === UserRole.SUPERADMIN) {
+    if (user.rol === UserRole.SUPERADMIN && !user.tenantId) {
       return emisor;
     }
 

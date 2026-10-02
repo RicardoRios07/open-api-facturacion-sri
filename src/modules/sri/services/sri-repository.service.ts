@@ -568,6 +568,11 @@ export class SriRepositoryService {
         c.fecha_autorizacion,
         c.numero_autorizacion as num_autorizacion,
         c.total_sin_impuestos as subtotal,
+        COALESCE((
+          SELECT SUM(ct.valor)
+          FROM comprobante_totales ct
+          WHERE ct.comprobante_id = c.id
+        ), 0) as total_impuestos,
         c.importe_total as total,
         c.receptor_identificacion as identificacion_comprador,
         c.receptor_razon_social as razon_social_comprador,
@@ -638,6 +643,27 @@ export class SriRepositoryService {
       FROM comprobante_detalles d
       WHERE d.comprobante_id = $1
       ORDER BY d.id`,
+      [comprobanteId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Obtiene el desglose de impuestos del comprobante. El encabezado
+   * `comprobantes` solo conserva el subtotal y el total final; la tarifa,
+   * base imponible y valor del impuesto pertenecen a esta tabla.
+   */
+  async findTotalesByComprobanteId(comprobanteId: string): Promise<any[]> {
+    const result = await this.db.query<any>(
+      `SELECT
+        codigo,
+        codigo_porcentaje,
+        base_imponible,
+        tarifa,
+        valor
+      FROM comprobante_totales
+      WHERE comprobante_id = $1
+      ORDER BY codigo, codigo_porcentaje`,
       [comprobanteId],
     );
     return result.rows;
