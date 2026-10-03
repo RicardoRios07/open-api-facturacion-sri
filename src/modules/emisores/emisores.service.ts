@@ -174,8 +174,10 @@ export class EmisoresService {
       return emisor;
     }
 
-    // Verificar que el emisor pertenece al tenant del usuario
-    if (emisor.tenantId && emisor.tenantId !== user.tenantId) {
+    // Un token tenant-scoped solo puede acceder a emisores de su tenant.
+    // También se rechaza tenant_id NULL para evitar mezclar emisores globales
+    // con los datos de un negocio registrado.
+    if (user.tenantId && emisor.tenantId !== user.tenantId) {
       throw new ForbiddenException('No tienes acceso a este emisor');
     }
 
@@ -290,9 +292,13 @@ export class EmisoresService {
   }
 
   async create(dto: CreateEmisorDto): Promise<EmisorResponseDto> {
-    // Verificar si ya existe
+    // POST es idempotente dentro del tenant: si el mismo emisor ya existe,
+    // devolverlo en lugar de provocar un falso error de duplicado.
     const existing = await this.findByRuc(dto.ruc);
     if (existing) {
+      if (dto.tenantId && existing.tenantId === dto.tenantId) {
+        return existing;
+      }
       throw new BadRequestException(`Ya existe un emisor con RUC ${dto.ruc}`);
     }
 
@@ -376,7 +382,9 @@ export class EmisoresService {
     }
 
     if (updates.length === 0) {
-      return this.findOne(id);
+      throw new BadRequestException(
+        'Debe enviar al menos un campo válido para actualizar el emisor',
+      );
     }
 
     updates.push(`updated_at = NOW()`);

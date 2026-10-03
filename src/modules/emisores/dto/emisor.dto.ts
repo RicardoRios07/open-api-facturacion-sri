@@ -131,16 +131,22 @@ export class UpdateEmisorDto {
   @ApiPropertyOptional({ description: 'Razón social' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(3, 200)
   razonSocial?: string;
 
   @ApiPropertyOptional({ description: 'Nombre comercial' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(1, 200)
   nombreComercial?: string;
 
   @ApiPropertyOptional({ description: 'Dirección matriz' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(2, 300)
   direccionMatriz?: string;
 
   @ApiPropertyOptional({ description: 'Obligado a llevar contabilidad' })
@@ -151,11 +157,15 @@ export class UpdateEmisorDto {
   @ApiPropertyOptional({ description: 'Número de contribuyente especial' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(1, 20)
   contribuyenteEspecial?: string;
 
   @ApiPropertyOptional({ description: 'Código de agente de retención' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(1, 30)
   agenteRetencion?: string;
 
   @ApiPropertyOptional({ description: 'Es contribuyente RIMPE' })
