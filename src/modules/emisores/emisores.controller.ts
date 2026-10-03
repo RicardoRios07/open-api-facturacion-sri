@@ -81,8 +81,9 @@ export class EmisoresController {
     @Body() dto: CreateEmisorDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<EmisorResponseDto> {
-    // Si no es SUPERADMIN, forzar el tenantId del usuario
-    if (user.rol !== UserRole.SUPERADMIN && user.tenantId) {
+    // Todo token tenant-scoped, incluido el service token de Vendi,
+    // debe escribir exclusivamente en su tenant. Nunca confiar en el body.
+    if (user.tenantId) {
       dto.tenantId = user.tenantId;
     }
     return this.emisoresService.create(dto);

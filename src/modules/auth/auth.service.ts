@@ -231,6 +231,14 @@ export class AuthService {
    * Valida un payload JWT y retorna el usuario (usado por JwtStrategy)
    */
   async validatePayload(payload: JwtPayload): Promise<JwtPayload> {
+    // El dashboard Vendi usa una identidad de servicio global; el aislamiento
+    // real se hace resolviendo y validando el tenantId más abajo. No requiere
+    // crear un usuario técnico por cada tenant.
+    const isVendiServiceToken =
+      payload.iss === 'https://app.vendi.ec' &&
+      payload.rol === 'SUPERADMIN' &&
+      payload.scope === 'sri:tenant:access';
+
     // Identidad de servicio Vendi: se autentica por JWT HS256 compartido y
     // scope/audience en el endpoint interno; no representa a un usuario humano.
     if (
@@ -241,10 +249,12 @@ export class AuthService {
       return payload;
     }
 
-    const user = await this.db.queryOne<{ id: string; activo: boolean }>(
-      'SELECT id, activo FROM usuarios WHERE id = $1',
-      [payload.sub],
-    );
+    const user = isVendiServiceToken
+      ? { id: payload.sub, activo: true }
+      : await this.db.queryOne<{ id: string; activo: boolean }>(
+          'SELECT id, activo FROM usuarios WHERE id = $1',
+          [payload.sub],
+        );
 
     if (!user || !user.activo) {
       throw new UnauthorizedException('Token inválido o usuario inactivo');
