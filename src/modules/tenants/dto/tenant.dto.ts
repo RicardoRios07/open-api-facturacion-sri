@@ -102,6 +102,13 @@ export class ProvisionTenantDto {
   @ApiPropertyOptional({ enum: TenantPlan })
   @IsOptional()
   @IsEnum(TenantPlan)
+  @Transform(({ value }) => {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === 'inicio' || normalized === 'basico') return TenantPlan.BASICO;
+    if (normalized === 'pro') return TenantPlan.PRO;
+    if (normalized === 'business' || normalized === 'enterprise') return TenantPlan.ENTERPRISE;
+    return value;
+  })
   plan?: TenantPlan;
 }
 
