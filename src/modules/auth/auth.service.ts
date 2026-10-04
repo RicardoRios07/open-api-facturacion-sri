@@ -256,7 +256,10 @@ export class AuthService {
           [payload.sub],
         );
 
-    if (!user || !user.activo) {
+    // El service token de Vendi no representa a un usuario humano ni requiere
+    // crear un usuario técnico por tenant. Su autorización queda limitada por
+    // el issuer, scope y tenantId validados en este método.
+    if (!isVendiServiceToken && (!user || !user.activo)) {
       throw new UnauthorizedException('Token inválido o usuario inactivo');
     }
 

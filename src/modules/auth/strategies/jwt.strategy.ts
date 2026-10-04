@@ -38,9 +38,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             });
             client(_request, rawJwtToken, done);
           } else {
-            // Binding Vendi → Open-SRI usa un secreto HS256 dedicado.
+            // El binding Vendi → Open-SRI usa un secreto HS256 dedicado,
+            // independientemente del issuer histórico utilizado por Vendi.
             // Los tokens internos de usuarios continúan usando jwt.secret.
-            const secret = payload.iss === 'vendi-dashboard'
+            const isVendiBinding =
+              payload.iss === 'vendi-dashboard' ||
+              payload.iss === 'https://app.vendi.ec';
+            const secret = isVendiBinding
               ? configService.get<string>('vendi.bindingSecret')
               : configService.get<string>('jwt.secret');
             if (!secret) {
