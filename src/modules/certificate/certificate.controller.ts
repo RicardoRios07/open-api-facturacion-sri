@@ -120,11 +120,11 @@ export class CertificateController {
 
     const ownership = user.rol === UserRole.SUPERADMIN && !user.tenantId
       ? await this.db.query(
-          'SELECT id FROM emisores WHERE certificado_nombre = $1 LIMIT 1',
+          'SELECT id, certificado_password_encrypted FROM emisores WHERE certificado_nombre = $1 LIMIT 1',
           [fileName],
         )
       : await this.db.query(
-          `SELECT id FROM emisores
+          `SELECT id, certificado_password_encrypted FROM emisores
            WHERE certificado_nombre = $1 AND tenant_id = $2 AND estado = 'ACTIVO'
            LIMIT 1`,
           [fileName, user.tenantId],
@@ -145,7 +145,7 @@ export class CertificateController {
         certificado_updated_at = NULL,
         updated_at = NOW()
        WHERE certificado_nombre = $1
-         AND ($2::text IS NULL OR tenant_id = $2)
+         AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
        RETURNING id, ruc`,
       [fileName, user.rol === UserRole.SUPERADMIN && !user.tenantId ? null : user.tenantId],
     );
@@ -433,6 +433,23 @@ export class CertificateController {
     }
 
     const certInfo = this.certificateService.getCertificateInfo(fileName);
+    const encryptedPassword = ownership.rows[0]?.certificado_password_encrypted;
+    if (encryptedPassword) {
+      const password = await this.decryptPassword(encryptedPassword);
+      const extracted = this.certificateService.extractP12CertificateInfo(fileName, password);
+      return {
+        success: true,
+        data: {
+          ...certInfo,
+          subject: extracted.subject,
+          issuer: extracted.issuer,
+          validity: extracted.validity,
+          serialNumber: extracted.serialNumber,
+          isExpired: extracted.isExpired,
+          daysUntilExpiry: extracted.daysUntilExpiry,
+        },
+      };
+    }
 
     return {
       success: true,
