@@ -18,13 +18,6 @@ lerna-debug.log*
 # Tests
 /coverage
 /.nyc_output
-/bitacoras
-/bitacora-pruebas.md
-/progreso-pruebas.md
-/.playwright-mcp
-/playwright-report
-/test-results
-/playwright/.cache
 
 # IDEs and editors
 /.idea
@@ -46,6 +39,8 @@ lerna-debug.log*
 .env
 .env.*
 !.env.example
+!.env.production.example
+!.env.staging.example
 
 # Internal planning and analysis docs
 # apicore-*.md
@@ -69,13 +64,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Agents
 .agents
 .agent
-.devin
+.opencode
+.opencode/
 skills-lock.json
-.windsurf
 
-# JCBV
-/cli-JCBV
-.venv
-.jcbv-memory
-.agent-skills
-AGENTS.md
+# Auto-deploy trigger Mon Jun 29 10:38:48 -05 2026

@@ -13,6 +13,8 @@ interface RequestUser {
   sub?: string;
   email?: string;
   tenantId?: string;
+  iss?: string;
+  scope?: string;
 }
 
 /**
@@ -46,11 +48,21 @@ export class AuditInterceptor implements NestInterceptor {
 
     const startTime = Date.now();
     const user = (request as Request & { user?: RequestUser }).user;
+    const isServiceIdentity =
+      user?.sub === 'vendi-dashboard' ||
+      (user?.iss === 'https://app.vendi.ec' &&
+        user?.scope === 'sri:tenant:access');
+    // El token compartido autentica al servicio, no a una fila de usuarios.
+    // Nunca insertar su sub como FK: puede ser un UUID sintético inexistente.
+    const auditUserId = isServiceIdentity
+      ? undefined
+      : user?.sub && this.isUuid(user.sub)
+        ? user.sub
+        : undefined;
+    const auditUserEmail = isServiceIdentity ? 'vendi-dashboard' : user?.email;
     const url = request.url || '';
     const recurso = this.extractRecurso(url);
-    const recursoId =
-      (request.params?.['id'] as string) ||
-      (request.params?.['claveAcceso'] as string);
+    const recursoId = request.params?.['id'] || request.params?.['claveAcceso'];
     const accion = this.methodToAccion(method, url);
 
     return next.handle().pipe(
@@ -58,8 +70,8 @@ export class AuditInterceptor implements NestInterceptor {
         const duracionMs = Date.now() - startTime;
         // Fire-and-forget — no bloquear la respuesta
         void this.auditService.log({
-          usuarioId: user?.sub,
-          usuarioEmail: user?.email,
+          usuarioId: auditUserId,
+          usuarioEmail: auditUserEmail,
           tenantId: user?.tenantId,
           ipAddress: request.ip || request.socket?.remoteAddress,
           userAgent: request.headers['user-agent'],
@@ -79,8 +91,8 @@ export class AuditInterceptor implements NestInterceptor {
         const duracionMs = Date.now() - startTime;
         // Registrar operaciones fallidas también
         void this.auditService.log({
-          usuarioId: user?.sub,
-          usuarioEmail: user?.email,
+          usuarioId: auditUserId,
+          usuarioEmail: auditUserEmail,
           tenantId: user?.tenantId,
           ipAddress: request.ip || request.socket?.remoteAddress,
           userAgent: request.headers['user-agent'],

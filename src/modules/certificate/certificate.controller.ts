@@ -16,7 +16,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { unlinkSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ApiTags,
   ApiOperation,
@@ -55,7 +54,6 @@ export class CertificateController {
     private readonly encryptionService: EncryptionService,
     private readonly xmlSignerService: XmlSignerService,
     private readonly emisoresService: EmisoresService,
-    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -74,41 +72,28 @@ export class CertificateController {
   async listCertificates(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @CurrentUser() user?: JwtPayload,
   ) {
     const options: { page?: number; limit?: number } = {};
     if (page) options.page = parseInt(page);
     if (limit) options.limit = parseInt(limit);
 
     const result = this.certificateService.listCertificates(options);
-
-    // Enriquecer con info de emisor vinculado desde la BD
-    const certsWithEmisor = await Promise.all(
-      result.certificates.map(async (cert) => {
-        const emisor = await this.db.queryOne<{
-          ruc: string;
-          razon_social: string;
-          certificado_valido_hasta: Date | null;
-          certificado_sujeto: string | null;
-        }>(
-          `SELECT ruc, razon_social, certificado_valido_hasta, certificado_sujeto
-           FROM emisores WHERE certificado_nombre = $1 LIMIT 1`,
-          [cert.name],
+    const ownership = user?.rol === UserRole.SUPERADMIN && !user.tenantId
+      ? await this.db.query('SELECT certificado_nombre FROM emisores WHERE certificado_nombre IS NOT NULL')
+      : await this.db.query(
+          `SELECT certificado_nombre FROM emisores
+           WHERE tenant_id = $1 AND estado = 'ACTIVO' AND certificado_nombre IS NOT NULL`,
+          [user?.tenantId],
         );
-        return {
-          ...cert,
-          emisorRuc: emisor?.ruc || null,
-          emisorRazonSocial: emisor?.razon_social || null,
-          validoHasta: emisor?.certificado_valido_hasta || null,
-          sujeto: emisor?.certificado_sujeto || null,
-        };
-      }),
-    );
+    const allowed = new Set(ownership.rows.map((row) => row.certificado_nombre));
+    const certificates = result.certificates.filter((cert) => allowed.has(cert.name));
 
     return {
       success: true,
       data: {
-        certificates: certsWithEmisor,
-        total: result.total,
+        certificates,
+        total: certificates.length,
         pagination: result.pagination,
       },
     };
@@ -133,18 +118,19 @@ export class CertificateController {
       );
     }
 
-    if (!this.certificateService.certificateExists(fileName)) {
+    const ownership = user.rol === UserRole.SUPERADMIN && !user.tenantId
+      ? await this.db.query(
+          'SELECT id, certificado_password_encrypted FROM emisores WHERE certificado_nombre = $1 LIMIT 1',
+          [fileName],
+        )
+      : await this.db.query(
+          `SELECT id, certificado_password_encrypted FROM emisores
+           WHERE certificado_nombre = $1 AND tenant_id = $2 AND estado = 'ACTIVO'
+           LIMIT 1`,
+          [fileName, user.tenantId],
+        );
+    if (!this.certificateService.certificateExists(fileName) || ownership.rows.length === 0) {
       throw new NotFoundException(`El certificado ${fileName} no existe`);
-    }
-
-    if (user.rol !== UserRole.SUPERADMIN) {
-      const owner = await this.db.queryOne<{ tenant_id: string | null }>(
-        `SELECT tenant_id FROM emisores WHERE certificado_nombre = $1 LIMIT 1`,
-        [fileName],
-      );
-      if (!owner || !owner.tenant_id || owner.tenant_id !== user.tenantId) {
-        throw new NotFoundException(`El certificado ${fileName} no existe`);
-      }
     }
 
     // Limpiar datos del certificado en la tabla emisores
@@ -159,8 +145,9 @@ export class CertificateController {
         certificado_updated_at = NULL,
         updated_at = NOW()
        WHERE certificado_nombre = $1
+         AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
        RETURNING id, ruc`,
-      [fileName],
+      [fileName, user.rol === UserRole.SUPERADMIN && !user.tenantId ? null : user.tenantId],
     );
 
     // Eliminar archivo físico
@@ -170,11 +157,6 @@ export class CertificateController {
     this.logger.log(
       `Certificado ${fileName} eliminado. Emisores actualizados: ${emisoresLimpiados}`,
     );
-
-    this.eventEmitter.emit('certificado.eliminado', {
-      fileName,
-      emisoresActualizados: emisoresLimpiados,
-    });
 
     return {
       success: true,
@@ -238,7 +220,7 @@ export class CertificateController {
       throw new BadRequestException('No se proporcionó ningún archivo');
     }
 
-    const { password, ruc } = body;
+    const { password } = body;
 
     if (!password) {
       // Delete uploaded file if no password
@@ -251,20 +233,6 @@ export class CertificateController {
         'Se requiere la contraseña del certificado para validar su vigencia',
       );
     }
-
-    if (!ruc) {
-      const filePath = join(STORAGE_PATHS.certs, file.filename);
-      if (existsSync(filePath)) {
-        unlinkSync(filePath);
-      }
-
-      throw new BadRequestException(
-        'El RUC del emisor es obligatorio para vincular el certificado',
-      );
-    }
-
-    // Validar acceso tenant antes de procesar
-    await this.emisoresService.validateRucAccess(ruc, user);
 
     try {
       // Validate certificate expiry
@@ -309,39 +277,39 @@ export class CertificateController {
         response.data.warning = validation.warning;
       }
 
-      this.eventEmitter.emit('certificado.subido', {
-        fileName: file.filename,
-        size: file.size,
-        subject: validation.subject?.commonName || '',
-        tenantId: user.tenantId,
-      });
+      // If RUC is provided, bind certificate to emisor
+      if (body.ruc) {
+        // Validar acceso tenant antes de bindear
+        await this.emisoresService.validateRucAccess(body.ruc, user);
 
-      // Bind certificate to emisor (mandatory)
-      const filePath = join(STORAGE_PATHS.certs, file.filename);
-      const p12Buffer = readFileSync(filePath);
+        // Read the P12 file to get the buffer for database storage
+        const filePath = join(STORAGE_PATHS.certs, file.filename);
+        const p12Buffer = readFileSync(filePath);
 
-      const bindingResult = await this.bindCertificateToEmisor(
-        ruc,
-        file.filename,
-        password,
-        validation.expiryDate,
-        validation.subject?.commonName || '',
-        p12Buffer,
-      );
-
-      if (bindingResult.success) {
-        response.data.emisorBinding = {
-          ruc: ruc,
-          message: 'Certificado vinculado al emisor correctamente',
-        };
-        this.logger.log(
-          `Certificado ${file.filename} vinculado al emisor RUC: ${ruc}`,
+        const bindingResult = await this.bindCertificateToEmisor(
+          body.ruc,
+          user.tenantId,
+          file.filename,
+          password,
+          validation.expiryDate,
+          validation.subject?.commonName || '',
+          p12Buffer,
         );
-      } else {
-        response.data.emisorBindingWarning = bindingResult.message;
-        this.logger.warn(
-          `No se pudo vincular certificado: ${bindingResult.message}`,
-        );
+
+        if (bindingResult.success) {
+          response.data.emisorBinding = {
+            ruc: body.ruc,
+            message: 'Certificado vinculado al emisor correctamente',
+          };
+          this.logger.log(
+            `Certificado ${file.filename} vinculado al emisor RUC: ${body.ruc}`,
+          );
+        } else {
+          response.data.emisorBindingWarning = bindingResult.message;
+          this.logger.warn(
+            `No se pudo vincular certificado: ${bindingResult.message}`,
+          );
+        }
       }
 
       return response;
@@ -382,6 +350,7 @@ export class CertificateController {
    */
   private async bindCertificateToEmisor(
     ruc: string,
+    tenantId: string | null,
     fileName: string,
     password: string,
     expiryDate: Date,
@@ -391,8 +360,9 @@ export class CertificateController {
     try {
       // Check if emisor exists
       const emisor = await this.db.queryOne<any>(
-        'SELECT id FROM emisores WHERE ruc = $1',
-        [ruc],
+        `SELECT id FROM emisores
+         WHERE ruc = $1 AND ($2::text IS NULL OR tenant_id::text = $2)`,
+        [ruc, tenantId],
       );
 
       if (!emisor) {
@@ -411,8 +381,8 @@ export class CertificateController {
           certificado_sujeto = $4,
           certificado_p12 = $5,
           certificado_updated_at = NOW()
-        WHERE ruc = $6`,
-        [fileName, encryptedPassword, expiryDate, subject, p12Buffer, ruc],
+        WHERE ruc = $6 AND ($7::text IS NULL OR tenant_id::text = $7)`,
+        [fileName, encryptedPassword, expiryDate, subject, p12Buffer, ruc, tenantId],
       );
 
       // FIX P4: Invalidar caché del certificado en XmlSignerService
@@ -437,14 +407,49 @@ export class CertificateController {
   @ApiOperation({ summary: 'Obtener información de un certificado' })
   @ApiParam({ name: 'fileName', description: 'Nombre del archivo .p12' })
   @ApiResponse({ status: 200, description: 'Información del certificado' })
-  getCertificateInfo(@Param('fileName') fileName: string) {
+  async getCertificateInfo(
+    @Param('fileName') fileName: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
     if (!fileName || !fileName.toLowerCase().endsWith('.p12')) {
       throw new BadRequestException(
         'Nombre de archivo inválido. Debe tener extensión .p12',
       );
     }
 
+    const ownership = user.rol === UserRole.SUPERADMIN && !user.tenantId
+      ? await this.db.query(
+          'SELECT id FROM emisores WHERE certificado_nombre = $1 LIMIT 1',
+          [fileName],
+        )
+      : await this.db.query(
+          `SELECT id FROM emisores
+           WHERE certificado_nombre = $1 AND tenant_id = $2 AND estado = 'ACTIVO'
+           LIMIT 1`,
+          [fileName, user.tenantId],
+        );
+    if (ownership.rows.length === 0) {
+      throw new NotFoundException(`El certificado ${fileName} no existe`);
+    }
+
     const certInfo = this.certificateService.getCertificateInfo(fileName);
+    const encryptedPassword = ownership.rows[0]?.certificado_password_encrypted;
+    if (encryptedPassword) {
+      const password = await this.decryptPassword(encryptedPassword);
+      const extracted = this.certificateService.extractP12CertificateInfo(fileName, password);
+      return {
+        success: true,
+        data: {
+          ...certInfo,
+          subject: extracted.subject,
+          issuer: extracted.issuer,
+          validity: extracted.validity,
+          serialNumber: extracted.serialNumber,
+          isExpired: extracted.isExpired,
+          daysUntilExpiry: extracted.daysUntilExpiry,
+        },
+      };
+    }
 
     return {
       success: true,
@@ -478,17 +483,10 @@ export class CertificateController {
       );
     }
 
-    let validation;
-    try {
-      validation = this.certificateService.validateCertificateExpiry(
-        fileName,
-        password,
-      );
-    } catch (error) {
-      throw new BadRequestException(
-        `No se pudo validar el certificado. Verifique la contraseña. ${error.message || ''}`,
-      );
-    }
+    const validation = this.certificateService.validateCertificateExpiry(
+      fileName,
+      password,
+    );
 
     const response: any = {
       success: true,

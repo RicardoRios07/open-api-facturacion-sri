@@ -46,13 +46,14 @@ export class EmisoresController {
     @Query() query: QueryEmisoresDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<PaginatedEmisoresResponseDto> {
-    // SUPERADMIN ve todos, otros ven solo los de su tenant
-    if (user.rol === UserRole.SUPERADMIN) {
+    // El service account de Vendi firma como SUPERADMIN por compatibilidad,
+    // pero siempre incluye tenantId. Ese token debe quedar tenant-scoped.
+    // Solo el SUPERADMIN interactivo sin tenant puede ver todos.
+    if (user.rol === UserRole.SUPERADMIN && !user.tenantId) {
       return this.emisoresService.findAll(query);
     }
     return this.emisoresService.findAllByTenant(user.tenantId!, query);
   }
-
 
   @Get(':id')
   @ApiOperation({ summary: 'Obtener un emisor por ID' })
@@ -81,8 +82,9 @@ export class EmisoresController {
     @Body() dto: CreateEmisorDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<EmisorResponseDto> {
-    // Si no es SUPERADMIN, forzar el tenantId del usuario
-    if (user.rol !== UserRole.SUPERADMIN && user.tenantId) {
+    // Todo token tenant-scoped, incluido el service token de Vendi,
+    // debe escribir exclusivamente en su tenant. Nunca confiar en el body.
+    if (user.tenantId) {
       dto.tenantId = user.tenantId;
     }
     return this.emisoresService.create(dto);

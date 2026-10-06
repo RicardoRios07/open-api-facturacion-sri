@@ -143,6 +143,7 @@ describe('GuiaRemisionService — Emisión', () => {
           provide: SriBaseService,
           useValue: {
             validarIdentificacion: jest.fn(),
+            injectProveedorRucInfoAdicional: jest.fn().mockImplementation(async (info) => info),
             validarTipoIdentificacionCatalogo: jest.fn().mockResolvedValue(undefined),
             getDefaultAmbiente: jest.fn().mockReturnValue(Ambiente.PRUEBAS),
           },

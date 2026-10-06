@@ -30,7 +30,8 @@ export enum EmisorEstado {
 
 export class QueryEmisoresDto {
   @ApiPropertyOptional({
-    description: 'Cursor (UUID) para paginación keyset (ID del último emisor de la página anterior)',
+    description:
+      'Cursor (UUID) para paginación keyset (ID del último emisor de la página anterior)',
   })
   @IsOptional()
   @IsUUID()
@@ -56,7 +57,9 @@ export class QueryEmisoresDto {
     default: 20,
   })
   @IsOptional()
-  @Transform(({ value }) => value !== undefined ? parseInt(String(value), 10) : 20)
+  @Transform(({ value }) =>
+    value !== undefined ? parseInt(String(value), 10) : 20,
+  )
   @IsInt()
   @Min(1)
   @Max(100)
@@ -128,16 +131,22 @@ export class UpdateEmisorDto {
   @ApiPropertyOptional({ description: 'Razón social' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(3, 200)
   razonSocial?: string;
 
   @ApiPropertyOptional({ description: 'Nombre comercial' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(1, 200)
   nombreComercial?: string;
 
   @ApiPropertyOptional({ description: 'Dirección matriz' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(2, 300)
   direccionMatriz?: string;
 
   @ApiPropertyOptional({ description: 'Obligado a llevar contabilidad' })
@@ -148,11 +157,15 @@ export class UpdateEmisorDto {
   @ApiPropertyOptional({ description: 'Número de contribuyente especial' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(1, 20)
   contribuyenteEspecial?: string;
 
   @ApiPropertyOptional({ description: 'Código de agente de retención' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Length(1, 30)
   agenteRetencion?: string;
 
   @ApiPropertyOptional({ description: 'Es contribuyente RIMPE' })
@@ -245,10 +258,11 @@ export class PaginatedEmisoresResponseDto {
   @ApiProperty({ type: [EmisorResponseDto] })
   data: EmisorResponseDto[];
 
-  @ApiPropertyOptional({ description: 'Cursor para la siguiente página, null si no hay más' })
+  @ApiPropertyOptional({
+    description: 'Cursor para la siguiente página, null si no hay más',
+  })
   nextCursor: string | null;
 
   @ApiProperty({ description: 'Indica si hay más elementos disponibles' })
   hasMore: boolean;
 }
-

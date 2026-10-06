@@ -516,17 +516,12 @@ describe('EmisoresService', () => {
       expect(updateParams).toContain('INACTIVO');
     });
 
-    it('debe retornar el emisor sin actualizar si no hay campos', async () => {
+    it('debe lanzar BadRequestException si no hay campos (comportamiento dev)', async () => {
       const updateDto: UpdateEmisorDto = {};
 
-      db.query
-        .mockResolvedValueOnce({ rows: [mockEmisorRow] } as any) // findOne (verificar existe)
-        .mockResolvedValueOnce({ rows: [mockEmisorRow] } as any); // findOne (retorno)
+      db.query.mockResolvedValueOnce({ rows: [mockEmisorRow] } as any); // findOne (verificar existe)
 
-      const result = await service.update('emisor-uuid-1', updateDto);
-
-      expect(result.id).toBe('emisor-uuid-1');
-      expect(db.query).toHaveBeenCalledTimes(2); // 2 findOne calls, no UPDATE
+      await expect(service.update('emisor-uuid-1', updateDto)).rejects.toThrow(BadRequestException);
     });
 
     it('debe lanzar NotFoundException si el emisor no existe', async () => {

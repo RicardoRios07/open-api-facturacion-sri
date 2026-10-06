@@ -37,6 +37,7 @@ describe('AuthController', () => {
           provide: AuthService,
           useValue: {
             login: jest.fn(),
+            getProfile: jest.fn(),
             refreshToken: jest.fn(),
             register: jest.fn(),
             changePassword: jest.fn(),
@@ -131,18 +132,16 @@ describe('AuthController', () => {
   });
 
   describe('GET /auth/me', () => {
-    it('debe retornar los datos del usuario autenticado', () => {
-      const result = controller.getProfile(mockUser);
+    it('debe retornar los datos del JWT autenticado', async () => {
+      const profile = { id: mockUser.sub, email: mockUser.email, rol: mockUser.rol, tenantId: mockUser.tenantId };
+      authService.getProfile.mockResolvedValue(profile as any);
+      const result = await controller.getProfile(mockUser);
 
-      expect(result).toEqual({
-        id: mockUser.sub,
-        email: mockUser.email,
-        rol: mockUser.rol,
-        tenantId: mockUser.tenantId,
-      });
+      expect(authService.getProfile).toHaveBeenCalledWith(mockUser.sub);
+      expect(result).toEqual(profile);
     });
 
-    it('debe retornar el id desde sub del payload', () => {
+    it('debe consultar el perfil usando el sub del payload', async () => {
       const userWithTenant: JwtPayload = {
         ...mockUser,
         sub: 'tenant-user-uuid',
@@ -150,7 +149,9 @@ describe('AuthController', () => {
         rol: UserRole.ADMIN,
       };
 
-      const result = controller.getProfile(userWithTenant);
+      const profile = { id: userWithTenant.sub, tenantId: userWithTenant.tenantId, rol: userWithTenant.rol };
+      authService.getProfile.mockResolvedValue(profile as any);
+      const result = await controller.getProfile(userWithTenant);
 
       expect(result.id).toBe('tenant-user-uuid');
       expect(result.tenantId).toBe('tenant-abc');

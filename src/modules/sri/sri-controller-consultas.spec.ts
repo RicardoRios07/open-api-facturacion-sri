@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SriController } from './sri.controller';
+import { RideService } from './services/ride.service';
 import { SriService } from './sri.service';
 import { EmisoresService } from '../emisores/emisores.service';
 import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
@@ -65,6 +66,10 @@ describe('SriController — Consultas (Multi-tenant + DTO)', () => {
             validateRucAccess: jest.fn(),
             findByTenantId: jest.fn(),
           },
+        },
+        {
+          provide: RideService,
+          useValue: { generarRide: jest.fn() },
         },
         {
           provide: ConfigService,

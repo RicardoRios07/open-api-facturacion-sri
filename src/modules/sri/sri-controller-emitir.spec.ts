@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SriController } from './sri.controller';
+import { RideService } from './services/ride.service';
 import { SriService } from './sri.service';
 import { EmisoresService } from '../emisores/emisores.service';
 import { JwtPayload, UserRole } from '../auth/dto/auth.dto';
@@ -69,6 +70,7 @@ describe('SriController — Emisión Factura', () => {
           provide: SriService,
           useValue: {
             emitirFactura: jest.fn(),
+            consultarEstadoEmision: jest.fn(),
             emitirNotaCredito: jest.fn(),
             emitirNotaDebito: jest.fn(),
             emitirRetencion: jest.fn(),
@@ -92,6 +94,10 @@ describe('SriController — Emisión Factura', () => {
             validateRucAccess: jest.fn().mockResolvedValue(undefined),
             findByTenantId: jest.fn(),
           },
+        },
+        {
+          provide: RideService,
+          useValue: { generarRide: jest.fn() },
         },
         {
           provide: ConfigService,
@@ -158,7 +164,7 @@ describe('SriController — Emisión Factura', () => {
   // U-CTRL-EMI-04: previewFactura exitoso
   // ==========================================
   it('U-CTRL-EMI-04: previewFactura valida RUC y retorna XML', async () => {
-    sriService.generarXmlPreview.mockResolvedValue('<factura>preview</factura>');
+    sriService.generarXmlPreview.mockReturnValue('<factura>preview</factura>');
 
     const result = await controller.previewFactura(createValidDto(), adminUser);
 
@@ -365,5 +371,24 @@ describe('SriController — Emisión Factura', () => {
   it('U-CTRL-EMI-18: debugFacturaFirmada con ADMIN lanza ForbiddenException', async () => {
     await expect(controller.debugFacturaFirmada(createValidDto(), adminUser)).rejects.toThrow(ForbiddenException);
     expect(sriService.generarFacturaFirmadaDebug).not.toHaveBeenCalled();
+  });
+
+  it('U-CTRL-COLA-01: valida acceso al RUC y no expone el emisor al consultar una cola', async () => {
+    sriService.consultarEstadoEmision.mockResolvedValue({
+      jobId: 'job-123', queueState: 'completed', estado: 'AUTORIZADO', emisorRuc: '0924383631001',
+      claveAcceso: '0702202601092438363100110010010000000161245294013',
+    });
+
+    const result = await controller.consultarEstadoEmision('job-123', adminUser);
+    expect(emisoresService.validateRucAccess).toHaveBeenCalledWith('0924383631001', adminUser);
+    expect(result).not.toHaveProperty('emisorRuc');
+    expect(result.estado).toBe('AUTORIZADO');
+  });
+
+  it('U-CTRL-COLA-02: bloquea una cola sin RUC verificable', async () => {
+    sriService.consultarEstadoEmision.mockResolvedValue({ jobId: 'job-123', queueState: 'waiting', estado: 'EN_COLA', emisorRuc: null });
+
+    await expect(controller.consultarEstadoEmision('job-123', adminUser)).rejects.toThrow(ForbiddenException);
+    expect(emisoresService.validateRucAccess).not.toHaveBeenCalled();
   });
 });

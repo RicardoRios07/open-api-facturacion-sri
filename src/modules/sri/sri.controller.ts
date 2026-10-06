@@ -96,12 +96,14 @@ export class SriController {
   @ApiBody({ type: CreateFacturaDto })
   @ApiResponse({
     status: 201,
-    description: 'Factura encolada para procesamiento asíncrono (según configuración del servidor)',
+    description:
+      'Factura encolada para procesamiento asíncrono (según configuración del servidor)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
     status: 200,
-    description: 'Factura procesada sincronamente (según configuración del servidor)',
+    description:
+      'Factura procesada sincronamente (según configuración del servidor)',
     type: FacturaResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
@@ -113,6 +115,24 @@ export class SriController {
     // Validar que el RUC del emisor pertenece al tenant del usuario
     await this.emisoresService.validateRucAccess(dto.emisor.ruc, user);
     return this.sriService.emitirFactura(dto);
+  }
+
+  @Get('colas/emision/:jobId')
+  @ApiOperation({ summary: 'Consultar estado de una emisión asíncrona' })
+  @ApiParam({ name: 'jobId', description: 'Identificador BullMQ retornado al encolar la emisión' })
+  @ApiResponse({ status: 200, description: 'Estado actual del trabajo de emisión' })
+  @ApiResponse({ status: 404, description: 'Trabajo no encontrado' })
+  async consultarEstadoEmision(
+    @Param('jobId') jobId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const status = await this.sriService.consultarEstadoEmision(jobId);
+    if (!status.emisorRuc) {
+      throw new ForbiddenException('No se pudo verificar el emisor de este trabajo');
+    }
+    await this.emisoresService.validateRucAccess(status.emisorRuc, user);
+    const { emisorRuc: _emisorRuc, ...safeStatus } = status;
+    return safeStatus;
   }
 
   @Post('emitir/nota-venta')
@@ -155,12 +175,14 @@ export class SriController {
   @ApiBody({ type: CreateNotaCreditoDto })
   @ApiResponse({
     status: 201,
-    description: 'Nota de crédito encolada para procesamiento asíncrono (según configuración)',
+    description:
+      'Nota de crédito encolada para procesamiento asíncrono (según configuración)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
     status: 200,
-    description: 'Nota de crédito procesada sincronamente (según configuración)',
+    description:
+      'Nota de crédito procesada sincronamente (según configuración)',
     type: NotaCreditoResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
@@ -182,7 +204,8 @@ export class SriController {
   @ApiBody({ type: CreateNotaDebitoDto })
   @ApiResponse({
     status: 201,
-    description: 'Nota de débito encolada para procesamiento asíncrono (según configuración)',
+    description:
+      'Nota de débito encolada para procesamiento asíncrono (según configuración)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
@@ -209,7 +232,8 @@ export class SriController {
   @ApiBody({ type: CreateRetencionDto })
   @ApiResponse({
     status: 201,
-    description: 'Retención encolada para procesamiento asíncrono (según configuración)',
+    description:
+      'Retención encolada para procesamiento asíncrono (según configuración)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
@@ -236,12 +260,14 @@ export class SriController {
   @ApiBody({ type: CreateGuiaRemisionDto })
   @ApiResponse({
     status: 201,
-    description: 'Guía de remisión encolada para procesamiento asíncrono (según configuración)',
+    description:
+      'Guía de remisión encolada para procesamiento asíncrono (según configuración)',
     type: EmisionEncoladaResponseDto,
   })
   @ApiResponse({
     status: 200,
-    description: 'Guía de remisión procesada sincronamente (según configuración)',
+    description:
+      'Guía de remisión procesada sincronamente (según configuración)',
     type: GuiaRemisionResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
@@ -356,7 +382,10 @@ export class SriController {
     xmlFirmado: string;
   }> {
     this.logger.log('POST /sri/debug/factura-firmada');
-    if (this.configService.get('nodeEnv') === 'production') {
+    if (user.rol !== UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Solo SUPERADMIN puede generar XML firmado de depuración');
+    }
+    if (this.configService.get('NODE_ENV') === 'production') {
       throw new ForbiddenException('Endpoint deshabilitado en producción');
     }
     if (user.rol !== UserRole.SUPERADMIN) {
@@ -751,5 +780,29 @@ export class SriController {
       throw new ForbiddenException('La anulación masiva requiere rol SUPERADMIN');
     }
     return this.sriService.anularMasivamente(body.clavesAcceso);
+  }
+
+  @Get('consultar-ruc/:identificacion')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Consultar datos de RUC o cédula',
+    description:
+      'Obtiene datos públicos de un contribuyente por RUC o cédula usando API pública del SRI',
+  })
+  @ApiParam({
+    name: 'identificacion',
+    description: 'Número de RUC (13 dígitos) o cédula (10 dígitos)',
+  })
+  @ApiResponse({ status: 200, description: 'Datos del contribuyente' })
+  @ApiResponse({ status: 404, description: 'No encontrado' })
+  async consultarRuc(@Param('identificacion') identificacion: string): Promise<{
+    existe: boolean;
+    identificacion: string;
+    razonSocial?: string;
+    nombreComercial?: string;
+    error?: string;
+  }> {
+    this.logger.log(`GET /sri/consultar-ruc/${identificacion}`);
+    return this.sriService.consultarRuc(identificacion);
   }
 }

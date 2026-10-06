@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { SriEmisionProcessor } from './sri-emision.processor';
 import { FacturaService } from '../services/factura.service';
+import { NotaVentaService } from '../services/nota-venta.service';
 import { NotaCreditoService } from '../services/nota-credito.service';
 import { NotaDebitoService } from '../services/nota-debito.service';
 import { RetencionService } from '../services/retencion.service';
@@ -34,6 +35,10 @@ describe('SriEmisionProcessor', () => {
         {
           provide: FacturaService,
           useValue: { emitirFactura: jest.fn() },
+        },
+        {
+          provide: NotaVentaService,
+          useValue: { emitirNotaVenta: jest.fn() },
         },
         {
           provide: NotaCreditoService,

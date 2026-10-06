@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { extractRucFromClaveAcceso } from './utils/clave-acceso.utils';
@@ -59,31 +59,70 @@ export class SriService {
   // FACTURA — Delegado a FacturaService
   // ==========================================
 
-  /**
-   * Emisión de facturas.
-   *
-   * Desde el 01/01/2026, la transmisión en tiempo real es obligatoria
-   * (Resolución NAC-DGERCGC26-00000027). Por defecto, SRI_EMISION_ASYNC
-   * debe ser 'false' para cumplir con emisión síncrona.
-   *
-   * El modo encolado (SRI_EMISION_ASYNC='true') se mantiene como
-   * contingencia para cuando el SRI está caído. En ese caso, los
-   * comprobantes se encolan y se procesan automáticamente cuando
-   * el SRI vuelve a estar disponible.
-   */
-
-  async emitirFactura(dto: CreateFacturaDto): Promise<EmisionEncoladaResponseDto | FacturaResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+  async emitirFactura(
+    dto: CreateFacturaDto,
+  ): Promise<EmisionEncoladaResponseDto | FacturaResponseDto> {
+    const isAsync =
+      this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
     if (!isAsync) {
       return this.facturaService.emitirFactura(dto);
     }
-    const job = await this.emisionQueue.add('emision', { tipo: 'FACTURA', dto });
+    const job = await this.emisionQueue.add('emision', {
+      tipo: 'FACTURA',
+      dto,
+    });
     this.logger.log(`Factura encolada con Job ID: ${job.id}`);
     return {
       mensaje: 'Factura encolada para emisión asíncrona',
       jobId: job.id!,
       estado: 'EN_COLA',
     };
+  }
+
+  /**
+   * Consulta un trabajo BullMQ sin exponer el DTO ni el stack interno.
+   * La autorización por RUC/tenant se aplica en el controlador antes de
+   * entregar la respuesta al consumidor.
+   */
+  async consultarEstadoEmision(jobId: string): Promise<{
+    jobId: string;
+    queueState: string;
+    estado: string;
+    emisorRuc: string | null;
+    claveAcceso?: string;
+    error?: string;
+  }> {
+    if (!/^[a-zA-Z0-9:_-]{1,128}$/.test(jobId)) {
+      throw new BadRequestException('Identificador de trabajo inválido');
+    }
+
+    const job = await this.emisionQueue.getJob(jobId);
+    if (!job) throw new NotFoundException('Trabajo de emisión no encontrado');
+
+    const queueState = await job.getState();
+    const payload = job.data as { dto?: { emisor?: { ruc?: string } } };
+    const emisorRuc = payload.dto?.emisor?.ruc ?? null;
+
+    if (queueState === 'completed') {
+      const result = (job.returnvalue ?? {}) as Record<string, unknown>;
+      return {
+        jobId,
+        queueState,
+        estado: typeof result.estado === 'string' ? result.estado : 'COMPLETADO',
+        emisorRuc,
+        claveAcceso: typeof result.claveAcceso === 'string' ? result.claveAcceso : undefined,
+      };
+    }
+    if (queueState === 'failed') {
+      return {
+        jobId,
+        queueState,
+        estado: 'FALLIDO',
+        emisorRuc,
+        error: job.failedReason?.slice(0, 300) || 'La emisión no se pudo completar',
+      };
+    }
+    return { jobId, queueState, estado: 'EN_COLA', emisorRuc };
   }
 
   async generarXmlPreview(dto: CreateFacturaDto): Promise<string> {
@@ -129,11 +168,15 @@ export class SriService {
   async emitirNotaCredito(
     dto: CreateNotaCreditoDto,
   ): Promise<EmisionEncoladaResponseDto | NotaCreditoResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync =
+      this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
     if (!isAsync) {
       return this.notaCreditoService.emitirNotaCredito(dto);
     }
-    const job = await this.emisionQueue.add('emision', { tipo: 'NOTA_CREDITO', dto });
+    const job = await this.emisionQueue.add('emision', {
+      tipo: 'NOTA_CREDITO',
+      dto,
+    });
     this.logger.log(`Nota de crédito encolada con Job ID: ${job.id}`);
     return {
       mensaje: 'Nota de crédito encolada para emisión asíncrona',
@@ -149,11 +192,15 @@ export class SriService {
   async emitirNotaDebito(
     dto: CreateNotaDebitoDto,
   ): Promise<EmisionEncoladaResponseDto | NotaDebitoResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync =
+      this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
     if (!isAsync) {
       return this.notaDebitoService.emitirNotaDebito(dto);
     }
-    const job = await this.emisionQueue.add('emision', { tipo: 'NOTA_DEBITO', dto });
+    const job = await this.emisionQueue.add('emision', {
+      tipo: 'NOTA_DEBITO',
+      dto,
+    });
     this.logger.log(`Nota de débito encolada con Job ID: ${job.id}`);
     return {
       mensaje: 'Nota de débito encolada para emisión asíncrona',
@@ -169,11 +216,15 @@ export class SriService {
   async emitirRetencion(
     dto: CreateRetencionDto,
   ): Promise<EmisionEncoladaResponseDto | RetencionResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync =
+      this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
     if (!isAsync) {
       return this.retencionService.emitirRetencion(dto);
     }
-    const job = await this.emisionQueue.add('emision', { tipo: 'RETENCION', dto });
+    const job = await this.emisionQueue.add('emision', {
+      tipo: 'RETENCION',
+      dto,
+    });
     this.logger.log(`Retención encolada con Job ID: ${job.id}`);
     return {
       mensaje: 'Retención encolada para emisión asíncrona',
@@ -189,11 +240,15 @@ export class SriService {
   async emitirGuiaRemision(
     dto: CreateGuiaRemisionDto,
   ): Promise<EmisionEncoladaResponseDto | GuiaRemisionResponseDto> {
-    const isAsync = this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
+    const isAsync =
+      this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
     if (!isAsync) {
       return this.guiaRemisionService.emitirGuiaRemision(dto);
     }
-    const job = await this.emisionQueue.add('emision', { tipo: 'GUIA_REMISION', dto });
+    const job = await this.emisionQueue.add('emision', {
+      tipo: 'GUIA_REMISION',
+      dto,
+    });
     this.logger.log(`Guía de remisión encolada con Job ID: ${job.id}`);
     return {
       mensaje: 'Guía de remisión encolada para emisión asíncrona',
@@ -377,7 +432,12 @@ export class SriService {
       ).toString('base64');
     }
 
-    const meta: { total?: number; page: number; limit: number; totalPages?: number } = {
+    const meta: {
+      total?: number;
+      page: number;
+      limit: number;
+      totalPages?: number;
+    } = {
       page,
       limit,
     };
@@ -398,7 +458,7 @@ export class SriService {
   /**
    * Obtiene un comprobante por clave de acceso con sus detalles
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   async obtenerComprobante(claveAcceso: string): Promise<any> {
     const comprobante =
       await this.repository.findComprobanteConDetalles(claveAcceso);
@@ -406,11 +466,18 @@ export class SriService {
       return null;
     }
 
-    const detalles = await this.repository.findDetallesByComprobanteId(
-      comprobante.id,
-    );
-    const infoAdicional =
-      await this.repository.findInfoAdicionalByComprobanteId(comprobante.id);
+    const [detalles, infoAdicional, totales = []] = await Promise.all([
+      this.repository.findDetallesByComprobanteId(comprobante.id),
+      this.repository.findInfoAdicionalByComprobanteId(comprobante.id),
+      this.repository.findTotalesByComprobanteId(comprobante.id),
+    ]);
+    const totalConImpuestos = totales.map((total) => ({
+      codigo: total.codigo,
+      codigoPorcentaje: total.codigo_porcentaje,
+      baseImponible: parseFloat(total.base_imponible) || 0,
+      tarifa: parseFloat(total.tarifa) || 0,
+      valor: parseFloat(total.valor) || 0,
+    }));
 
     return {
       id: comprobante.id,
@@ -429,11 +496,19 @@ export class SriService {
       identificacionComprador: comprobante.identificacion_comprador,
       razonSocialComprador: comprobante.razon_social_comprador,
       subtotal: parseFloat(comprobante.subtotal) || 0,
-      totalImpuestos: parseFloat(comprobante.total_impuestos) || 0,
+      totalImpuestos: totalConImpuestos.reduce(
+        (sum, impuesto) => sum + impuesto.valor,
+        0,
+      ),
+      totalConImpuestos,
       total: parseFloat(comprobante.total) || 0,
       estado: comprobante.estado,
       fechaAutorizacion: comprobante.fecha_autorizacion,
       numAutorizacion: comprobante.num_autorizacion,
+      documentoModificadoTipo: comprobante.doc_modificado_tipo,
+      documentoModificadoNumero: comprobante.doc_modificado_numero,
+      documentoModificadoFecha: comprobante.doc_modificado_fecha,
+      motivo: comprobante.motivo,
       createdAt: comprobante.created_at,
       updatedAt: comprobante.updated_at,
       detalles: detalles.map((d) => ({
@@ -584,6 +659,7 @@ export class SriService {
       'RECHAZADO',
       'PENDIENTE',
       'EN PROCESO',
+      'EN_PROCESO',
     ];
     if (!estadosReintentables.includes(estadoActual)) {
       throw new BadRequestException(
@@ -826,7 +902,10 @@ export class SriService {
       }
 
       // Rate limiting configurable para evitar baneos de IP del SRI
-      const delayMs = this.configService.get<number>('SRI_REQUEST_DELAY_MS', 150);
+      const delayMs = this.configService.get<number>(
+        'SRI_REQUEST_DELAY_MS',
+        150,
+      );
       let syncProcessed = 0;
 
       for (const comp of comprobantes) {
@@ -1251,5 +1330,101 @@ export class SriService {
     );
 
     return { procesados, anulados, errores, detalle };
+  }
+
+  /**
+   * Consulta datos públicos de un RUC o cédula usando API gratuita
+   */
+  async consultarRuc(identificacion: string): Promise<{
+    existe: boolean;
+    identificacion: string;
+    razonSocial?: string;
+    nombreComercial?: string;
+    error?: string;
+  }> {
+    const isCedula = /^\d{10}$/.test(identificacion);
+
+    try {
+      if (isCedula) {
+        // ── Consulta de CÉDULA (API cédula con token) ──
+        const token = this.configService.get<string>(
+          'SOCKET_STUDIO_TOKEN_CEDULA',
+        );
+        if (!token) {
+          return {
+            existe: false,
+            identificacion,
+            error: 'Token de cédula no configurado',
+          };
+        }
+        const res = await fetch(
+          `https://apicedula.socket-studio.com/consulta-cedula/consulta/${identificacion}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(8000),
+          },
+        );
+        if (!res.ok) {
+          return {
+            existe: false,
+            identificacion,
+            error: 'No se encontraron datos',
+          };
+        }
+        const data = await res.json();
+        if (!data || !data.nombres) {
+          return {
+            existe: false,
+            identificacion,
+            error: 'No se encontraron datos',
+          };
+        }
+        return {
+          existe: true,
+          identificacion,
+          razonSocial: data.nombres,
+        };
+      } else {
+        // ── Consulta de RUC (API ruc con token) ──
+        const token = this.configService.get<string>('SOCKET_STUDIO_TOKEN_RUC');
+        const res = await fetch(
+          `https://apiruc.socket-studio.com/api/ruc/consulta/free/${identificacion}`,
+          {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            signal: AbortSignal.timeout(8000),
+          },
+        );
+        if (!res.ok) {
+          return {
+            existe: false,
+            identificacion,
+            error: 'No se encontraron datos',
+          };
+        }
+        const data = await res.json();
+        if (!data || !data.razon_social) {
+          return {
+            existe: false,
+            identificacion,
+            error: 'No se encontraron datos',
+          };
+        }
+        return {
+          existe: true,
+          identificacion,
+          razonSocial: data.razon_social,
+          nombreComercial: data.nombre_comercial || undefined,
+        };
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error consultando ${identificacion}: ${(error as Error).message}`,
+      );
+      return {
+        existe: false,
+        identificacion,
+        error: 'Error de conexión con el servicio de consulta',
+      };
+    }
   }
 }

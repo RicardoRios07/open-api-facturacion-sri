@@ -151,6 +151,7 @@ describe('RetencionService — Emisión', () => {
           provide: SriBaseService,
           useValue: {
             validarIdentificacion: jest.fn(),
+            injectProveedorRucInfoAdicional: jest.fn().mockImplementation(async (info) => info),
             validarTipoIdentificacionCatalogo: jest.fn().mockResolvedValue(undefined),
             validarRetencionesCatalogo: jest.fn().mockResolvedValue(undefined),
             validarDocumentoSustentoCatalogo: jest.fn().mockResolvedValue(undefined),

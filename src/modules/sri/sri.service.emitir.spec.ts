@@ -1,12 +1,14 @@
 import { Test } from '@nestjs/testing';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SriService } from './sri.service';
-import { SriSoapClient, FacturaService, NotaCreditoService, NotaDebitoService, RetencionService, GuiaRemisionService, XmlBuilderService } from './services';
+import { SriSoapClient, FacturaService, NotaVentaService, NotaCreditoService, NotaDebitoService, RetencionService, GuiaRemisionService, XmlBuilderService } from './services';
 import { SriRepositoryService } from './services/sri-repository.service';
 import { XmlStorageService } from './services/xml-storage.service';
 import { CreateFacturaDto } from './dto';
 import { TipoIdentificacion, FormaPago } from './constants';
+import { DatabaseService } from '../../database';
 
 /**
  * Tests unitarios para SriService.emitirFactura
@@ -15,7 +17,7 @@ import { TipoIdentificacion, FormaPago } from './constants';
 describe('SriService — Emisión Factura', () => {
   let service: SriService;
   let facturaService: jest.Mocked<FacturaService>;
-  let emisionQueue: { add: jest.Mock };
+  let emisionQueue: { add: jest.Mock; getJob: jest.Mock };
   let configService: jest.Mocked<ConfigService>;
 
   function createValidDto(): CreateFacturaDto {
@@ -49,7 +51,7 @@ describe('SriService — Emisión Factura', () => {
   }
 
   beforeEach(async () => {
-    emisionQueue = { add: jest.fn().mockResolvedValue({ id: 'job-123' }) };
+    emisionQueue = { add: jest.fn().mockResolvedValue({ id: 'job-123' }), getJob: jest.fn() };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -71,6 +73,7 @@ describe('SriService — Emisión Factura', () => {
           useValue: { emitirFactura: jest.fn(), generarXmlPreview: jest.fn(), generarFacturaFirmadaDebug: jest.fn() },
         },
         { provide: NotaCreditoService, useValue: {} },
+        { provide: NotaVentaService, useValue: {} },
         { provide: NotaDebitoService, useValue: {} },
         { provide: RetencionService, useValue: {} },
         { provide: GuiaRemisionService, useValue: {} },
@@ -87,6 +90,7 @@ describe('SriService — Emisión Factura', () => {
         },
         { provide: XmlBuilderService, useValue: { parseXml: jest.fn() } },
         { provide: 'BullQueue_sri-emision', useValue: emisionQueue },
+        { provide: DatabaseService, useValue: { query: jest.fn() } },
       ],
     }).compile();
 
@@ -161,5 +165,33 @@ describe('SriService — Emisión Factura', () => {
     expect(facturaService.generarFacturaFirmadaDebug).toHaveBeenCalled();
     expect(result.claveAcceso).toHaveLength(49);
     expect(result.xmlFirmado).toBeDefined();
+  });
+
+  it('U-SRI-COLA-01: un trabajo activo se expone como EN_COLA', async () => {
+    emisionQueue.getJob.mockResolvedValue({ data: { dto: { emisor: { ruc: '0924383631001' } } }, getState: jest.fn().mockResolvedValue('active') });
+
+    await expect(service.consultarEstadoEmision('job-123')).resolves.toEqual({ jobId: 'job-123', queueState: 'active', estado: 'EN_COLA', emisorRuc: '0924383631001' });
+  });
+
+  it('U-SRI-COLA-02: un trabajo completado entrega solo estado y clave', async () => {
+    emisionQueue.getJob.mockResolvedValue({ data: { dto: { emisor: { ruc: '0924383631001' } } }, getState: jest.fn().mockResolvedValue('completed'), returnvalue: { estado: 'AUTORIZADO', claveAcceso: '0702202601092438363100110010010000000161245294013' } });
+
+    const result = await service.consultarEstadoEmision('job-123');
+    expect(result.estado).toBe('AUTORIZADO');
+    expect(result.claveAcceso).toHaveLength(49);
+  });
+
+  it('U-SRI-COLA-03: un trabajo fallido limita el error expuesto', async () => {
+    emisionQueue.getJob.mockResolvedValue({ data: { dto: { emisor: { ruc: '0924383631001' } } }, getState: jest.fn().mockResolvedValue('failed'), failedReason: 'x'.repeat(350) });
+
+    const result = await service.consultarEstadoEmision('job-123');
+    expect(result.estado).toBe('FALLIDO');
+    expect(result.error).toHaveLength(300);
+  });
+
+  it('U-SRI-COLA-04: rechaza identificadores inválidos y trabajos inexistentes', async () => {
+    await expect(service.consultarEstadoEmision('../secret')).rejects.toThrow(BadRequestException);
+    emisionQueue.getJob.mockResolvedValue(null);
+    await expect(service.consultarEstadoEmision('job-404')).rejects.toThrow(NotFoundException);
   });
 });

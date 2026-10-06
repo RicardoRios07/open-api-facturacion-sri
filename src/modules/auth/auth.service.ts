@@ -100,12 +100,20 @@ export class AuthService {
       type: 'access',
     };
 
-    const expiresInConfig = this.configService.get<string>('jwt.expiresIn', '8h');
-    const accessToken = this.jwtService.sign(payload, { expiresIn: expiresInConfig as any });
-    
+    const expiresInConfig = this.configService.get<string>(
+      'jwt.expiresIn',
+      '8h',
+    );
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: expiresInConfig as any,
+    });
+
     // Decodificar para obtener el exp exacto en segundos
-    const decodedAccess = this.jwtService.decode(accessToken) as any;
-    const expiresInSeconds = Math.max(0, decodedAccess.exp - Math.floor(Date.now() / 1000));
+    const decodedAccess = this.jwtService.decode(accessToken);
+    const expiresInSeconds = Math.max(
+      0,
+      decodedAccess.exp - Math.floor(Date.now() / 1000),
+    );
     const expiresAtIso = new Date(decodedAccess.exp * 1000).toISOString();
 
     const refreshPayload: JwtPayload = {
@@ -113,7 +121,9 @@ export class AuthService {
       type: 'refresh',
     };
     // El refresh token suele tener mayor vida, ej. 7 días
-    const refreshToken = this.jwtService.sign(refreshPayload, { expiresIn: '7d' });
+    const refreshToken = this.jwtService.sign(refreshPayload, {
+      expiresIn: '7d',
+    });
 
     return {
       accessToken,
@@ -248,18 +258,64 @@ export class AuthService {
    * Valida un payload JWT y retorna el usuario (usado por JwtStrategy)
    */
   async validatePayload(payload: JwtPayload, allowRefreshToken = false): Promise<JwtPayload> {
-    const user = await this.db.queryOne<{ id: string; activo: boolean }>(
-      'SELECT id, activo FROM usuarios WHERE id = $1',
-      [payload.sub],
-    );
+    // El dashboard Vendi usa una identidad de servicio global; el aislamiento
+    // real se hace resolviendo y validando el tenantId más abajo. No requiere
+    // crear un usuario técnico por cada tenant.
+    const isVendiServiceToken =
+      payload.iss === 'https://app.vendi.ec' &&
+      payload.rol === 'SUPERADMIN' &&
+      payload.scope === 'sri:tenant:access';
 
-    if (!user || !user.activo) {
+    // Identidad de servicio Vendi: se autentica por JWT HS256 compartido y
+    // scope/audience en el endpoint interno; no representa a un usuario humano.
+    if (
+      payload.iss === 'vendi-dashboard' &&
+      payload.aud === 'open-sri-tenant-bindings' &&
+      payload.scope === 'tenant:binding:write'
+    ) {
+      return payload;
+    }
+
+    const user = isVendiServiceToken
+      ? { id: payload.sub, activo: true }
+      : await this.db.queryOne<{ id: string; activo: boolean }>(
+          'SELECT id, activo FROM usuarios WHERE id = $1',
+          [payload.sub],
+        );
+
+    // El service token de Vendi no representa a un usuario humano ni requiere
+    // crear un usuario técnico por tenant. Su autorización queda limitada por
+    // el issuer, scope y tenantId validados en este método.
+    if (!isVendiServiceToken && (!user || !user.activo)) {
       throw new UnauthorizedException('Token inválido o usuario inactivo');
     }
 
     if (payload.type === 'refresh' && !allowRefreshToken) {
       // Las estrategias de autenticación normales (JWT Guard) no deberían aceptar refresh tokens
-      throw new UnauthorizedException('Token de refresco no permitido para acceder a recursos');
+      throw new UnauthorizedException(
+        'Token de refresco no permitido para acceder a recursos',
+      );
+    }
+
+    // Vendi identifica tenants por slug (p. ej. "almafit"), mientras que
+    // Open-SRI usa el UUID interno de `tenants` en todas las FK. Resolver la
+    // identidad aquí centraliza el mapeo y evita que cada controlador haga
+    // consultas UUID con un slug (que provoca errores 22P02).
+    if (payload.tenantId) {
+      const tenant = await this.db.queryOne<{ id: string }>(
+        `SELECT id
+         FROM tenants
+         WHERE estado = 'ACTIVO'
+           AND (id::text = $1 OR vendi_tenant_key = $1)
+         LIMIT 1`,
+        [payload.tenantId],
+      );
+
+      if (!tenant) {
+        throw new UnauthorizedException('Tenant no registrado en Open-SRI');
+      }
+
+      return { ...payload, tenantId: tenant.id };
     }
 
     return payload;

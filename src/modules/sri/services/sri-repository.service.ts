@@ -1,4 +1,9 @@
-import { Injectable, Logger, Inject, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Inject,
+  BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
@@ -169,19 +174,25 @@ export class SriRepositoryService {
   ): Promise<{ punto_emision_id: string; establecimiento_id: string } | null> {
     // Verificar cache Redis distribuido
     const cacheKey = `punto-emision:${emisorId}:${establecimiento}:${puntoEmision}`;
-    const cached = await this.cacheManager.get<{ punto_emision_id: string; establecimiento_id: string }>(cacheKey);
+    const cached = await this.cacheManager.get<{
+      punto_emision_id: string;
+      establecimiento_id: string;
+    }>(cacheKey);
     if (cached) {
       return cached;
     }
 
     // Query database
-    const result = await this.db.queryOne<{ punto_emision_id: string; establecimiento_id: string }>(
+    const result = await this.db.queryOne<{
+      punto_emision_id: string;
+      establecimiento_id: string;
+    }>(
       `SELECT pe.id as punto_emision_id, e.id as establecimiento_id
        FROM puntos_emision pe
        JOIN establecimientos e ON pe.establecimiento_id = e.id
        WHERE e.emisor_id = $1 AND e.codigo = $2 AND pe.codigo = $3
        AND e.estado = 'ACTIVO' AND pe.estado = 'ACTIVO'`,
-       [emisorId, establecimiento, puntoEmision],
+      [emisorId, establecimiento, puntoEmision],
     );
 
     // Guardar en cache Redis si fue encontrado
@@ -280,15 +291,10 @@ export class SriRepositoryService {
     return result.rows[0];
   }
 
-  async findComprobanteByClaveAcceso(
-    claveAcceso: string,
-  ): Promise<ComprobanteRecord | null> {
-    return this.db.queryOne<ComprobanteRecord>(
-      'SELECT * FROM comprobantes WHERE clave_acceso = $1',
-      [claveAcceso],
-    );
-  }
-
+  /**
+   * Restaurado de main: lo usa el flujo de anulación (sri.service).
+   * Dev lo reemplazó por updateComprobante(id); se conserva por compatibilidad.
+   */
   async updateComprobanteByClaveAcceso(
     claveAcceso: string,
     data: Partial<ComprobanteRecord>,
@@ -306,6 +312,15 @@ export class SriRepositoryService {
       [...values, claveAcceso],
     );
     return result.rows.length > 0 ? result.rows[0] : null;
+  }
+
+  async findComprobanteByClaveAcceso(
+    claveAcceso: string,
+  ): Promise<ComprobanteRecord | null> {
+    return this.db.queryOne<ComprobanteRecord>(
+      'SELECT * FROM comprobantes WHERE clave_acceso = $1',
+      [claveAcceso],
+    );
   }
 
   // ==========================================
@@ -483,7 +498,7 @@ export class SriRepositoryService {
     }
 
     if (filters.identificacionComprador) {
-      conditions.push(`c.receptor_identificacion = $${paramIndex++}`);
+      conditions.push(`c.identificacion_comprador = $${paramIndex++}`);
       params.push(filters.identificacionComprador);
     }
 
@@ -511,12 +526,12 @@ export class SriRepositoryService {
     }
 
     if (filters.establecimiento) {
-      conditions.push(`est.codigo = $${paramIndex++}`);
+      conditions.push(`c.establecimiento = $${paramIndex++}`);
       params.push(filters.establecimiento);
     }
 
     if (filters.puntoEmision) {
-      conditions.push(`pe.codigo = $${paramIndex++}`);
+      conditions.push(`c.punto_emision = $${paramIndex++}`);
       params.push(filters.puntoEmision);
     }
 
@@ -527,7 +542,9 @@ export class SriRepositoryService {
         const cursorData = JSON.parse(jsonStr);
         if (cursorData && cursorData.createdAt && cursorData.id) {
           // c.created_at y c.id son menores que el cursor (orden descendente)
-          conditions.push(`(c.created_at, c.id) < ($${paramIndex++}, $${paramIndex++})`);
+          conditions.push(
+            `(c.created_at, c.id) < ($${paramIndex++}, $${paramIndex++})`,
+          );
           params.push(new Date(cursorData.createdAt), cursorData.id);
         }
       } catch (err) {
@@ -555,7 +572,10 @@ export class SriRepositoryService {
          ${whereClause}`,
         params.slice(0, filterParamsCount),
       );
-      total = countResult.rows.length > 0 ? parseInt(countResult.rows[0].count, 10) : 0;
+      total =
+        countResult.rows.length > 0
+          ? parseInt(countResult.rows[0].count, 10)
+          : 0;
     }
 
     const dataResult = await this.db.query<any>(
@@ -571,7 +591,11 @@ export class SriRepositoryService {
         c.fecha_autorizacion,
         c.numero_autorizacion as num_autorizacion,
         c.total_sin_impuestos as subtotal,
-        COALESCE((SELECT SUM(valor) FROM comprobante_totales ct WHERE ct.comprobante_id = c.id), 0) as total_impuestos,
+        COALESCE((
+          SELECT SUM(ct.valor)
+          FROM comprobante_totales ct
+          WHERE ct.comprobante_id = c.id
+        ), 0) as total_impuestos,
         c.importe_total as total,
         c.receptor_identificacion as identificacion_comprador,
         c.receptor_razon_social as razon_social_comprador,
@@ -594,38 +618,22 @@ export class SriRepositoryService {
     return { data: dataResult.rows, total };
   }
 
-
   /**
    * Busca un comprobante por clave de acceso con info de XML disponible
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   async findComprobanteConDetalles(claveAcceso: string): Promise<any> {
     return this.db.queryOne<any>(
       `SELECT 
         c.*,
         e.ruc as ruc_emisor,
         e.razon_social as razon_social_emisor,
-        e.nombre_comercial as nombre_comercial,
-        e.direccion_matriz as direccion_matriz,
-        e.obligado_contabilidad as obligado_contabilidad,
-        e.contribuyente_especial as contribuyente_especial,
-        e.agente_retencion as agente_retencion,
-        e.contribuyente_rimpe as contribuyente_rimpe,
         est.codigo as establecimiento,
-        est.direccion as direccion_establecimiento,
         pe.codigo as punto_emision,
         c.total_sin_impuestos as subtotal,
-        c.total_descuento as total_descuento,
-        COALESCE((SELECT SUM(valor) FROM comprobante_totales ct WHERE ct.comprobante_id = c.id), 0) as total_impuestos,
         c.importe_total as total,
-        c.propina as propina,
-        c.moneda as moneda,
-        c.receptor_tipo_identificacion as receptor_tipo_identificacion,
         c.receptor_identificacion as identificacion_comprador,
         c.receptor_razon_social as razon_social_comprador,
-        c.receptor_direccion as receptor_direccion,
-        c.receptor_email as receptor_email,
-        c.receptor_telefono as receptor_telefono,
         c.numero_autorizacion as num_autorizacion,
         CASE 
           WHEN x.id IS NOT NULL THEN true 
@@ -639,63 +647,6 @@ export class SriRepositoryService {
       WHERE c.clave_acceso = $1`,
       [claveAcceso],
     );
-  }
-
-  /**
-   * Obtiene los totales (impuestos agrupados) de un comprobante
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async findTotalesByComprobanteId(comprobanteId: string): Promise<any[]> {
-    const result = await this.db.query<any>(
-      `SELECT
-        codigo,
-        codigo_porcentaje,
-        base_imponible,
-        tarifa,
-        valor
-      FROM comprobante_totales
-      WHERE comprobante_id = $1
-      ORDER BY codigo, codigo_porcentaje`,
-      [comprobanteId],
-    );
-    return result.rows;
-  }
-
-  /**
-   * Obtiene los impuestos de los detalles de un comprobante
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async findImpuestosByComprobanteId(comprobanteId: string): Promise<any[]> {
-    const result = await this.db.query<any>(
-      `SELECT
-        ci.comprobante_detalle_id,
-        ci.codigo,
-        ci.codigo_porcentaje,
-        ci.tarifa,
-        ci.base_imponible,
-        ci.valor
-      FROM comprobante_impuestos ci
-      INNER JOIN comprobante_detalles cd ON ci.comprobante_detalle_id = cd.id
-      WHERE cd.comprobante_id = $1
-      ORDER BY cd.id, ci.codigo`,
-      [comprobanteId],
-    );
-    return result.rows;
-  }
-
-  /**
-   * Obtiene los pagos de un comprobante
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async findPagosByComprobanteId(comprobanteId: string): Promise<any[]> {
-    const result = await this.db.query<any>(
-      `SELECT forma_pago, total, plazo, unidad_tiempo
-       FROM comprobante_pagos
-       WHERE comprobante_id = $1
-       ORDER BY id`,
-      [comprobanteId],
-    );
-    return result.rows;
   }
 
   /**
@@ -715,6 +666,60 @@ export class SriRepositoryService {
       FROM comprobante_detalles d
       WHERE d.comprobante_id = $1
       ORDER BY d.id`,
+      [comprobanteId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Obtiene el desglose de impuestos del comprobante. El encabezado
+   * `comprobantes` solo conserva el subtotal y el total final; la tarifa,
+   * base imponible y valor del impuesto pertenecen a esta tabla.
+   */
+  async findTotalesByComprobanteId(comprobanteId: string): Promise<any[]> {
+    const result = await this.db.query<any>(
+      `SELECT
+        codigo,
+        codigo_porcentaje,
+        base_imponible,
+        tarifa,
+        valor
+      FROM comprobante_totales
+      WHERE comprobante_id = $1
+      ORDER BY codigo, codigo_porcentaje`,
+      [comprobanteId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Restaurado de main: lo usa ride.service.ts (RIDE/PDF). Dev lo había
+   * dejado fuera al reordenar el repositorio; query idéntica a prod.
+   */
+  async findImpuestosByComprobanteId(comprobanteId: string): Promise<any[]> {
+    const result = await this.db.query<any>(
+      `SELECT
+        ci.comprobante_detalle_id,
+        ci.codigo,
+        ci.codigo_porcentaje,
+        ci.tarifa,
+        ci.base_imponible,
+        ci.valor
+      FROM comprobante_impuestos ci
+      INNER JOIN comprobante_detalles cd ON ci.comprobante_detalle_id = cd.id
+      WHERE cd.comprobante_id = $1
+      ORDER BY cd.id, ci.codigo`,
+      [comprobanteId],
+    );
+    return result.rows;
+  }
+
+  async findPagosByComprobanteId(comprobanteId: string): Promise<any[]> {
+    const result = await this.db.query<any>(
+      `SELECT forma_pago, total, plazo, unidad_tiempo
+       FROM comprobante_pagos
+       WHERE comprobante_id = $1
+       ORDER BY id`,
       [comprobanteId],
     );
     return result.rows;

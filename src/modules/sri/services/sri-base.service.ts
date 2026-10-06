@@ -17,7 +17,7 @@ export class SriBaseService {
 
   private proveedorRucCache: string | null = null;
   private proveedorRucCacheTime = 0;
-  private static readonly PROVEEDOR_RUC_TTL_MS = 5 * 60 * 1000; // 5 minutos
+  private static readonly PROVEEDOR_RUC_TTL_MS = 5 * 60 * 1000;
 
   constructor(
     private readonly configService: ConfigService,
@@ -203,12 +203,10 @@ export class SriBaseService {
   }
 
   /**
-   * Resolución NAC-DGERCGC26-00000027: Obtiene el RUC del proveedor del sistema
-   * desde la tabla sistema_config en la BD.
-   * Incluye caché en memoria de 5 minutos para evitar consultar la BD en cada comprobante.
-   * @returns RUC del proveedor o null si no está configurado en BD
+   * Obtiene el RUC configurado para el proveedor del sistema y lo conserva
+   * temporalmente en memoria para no consultar la base de datos por documento.
    */
-  async getProveedorRuc(): Promise<string | null> {
+  private async getProveedorRuc(): Promise<string | null> {
     const now = Date.now();
     if (
       this.proveedorRucCache !== null &&
@@ -219,23 +217,14 @@ export class SriBaseService {
 
     try {
       const result = await this.db.query(
-        `SELECT valor FROM sistema_config WHERE clave = 'PROVEEDOR_RUC'`,
+        "SELECT valor FROM sistema_config WHERE clave = 'PROVEEDOR_RUC'",
       );
       const ruc = result.rows.length > 0 ? result.rows[0].valor : null;
 
-      if (ruc && ruc.length === 13) {
-        this.proveedorRucCache = ruc;
-        this.proveedorRucCacheTime = now;
-        return ruc;
-      }
-
-      this.logger.warn(
-        'PROVEEDOR_RUC no configurado en tabla sistema_config o inválido (debe tener 13 dígitos). ' +
-          'Resolución NAC-DGERCGC26-00000027 requiere incluir el RUC del proveedor del sistema.',
-      );
-      this.proveedorRucCache = null;
+      this.proveedorRucCache =
+        typeof ruc === 'string' && /^\d{13}$/.test(ruc) ? ruc : null;
       this.proveedorRucCacheTime = now;
-      return null;
+      return this.proveedorRucCache;
     } catch (error) {
       this.logger.error(
         `Error consultando PROVEEDOR_RUC desde sistema_config: ${(error as Error).message}`,
@@ -245,22 +234,19 @@ export class SriBaseService {
   }
 
   /**
-   * Inyecta el RUC del proveedor del sistema en el array de infoAdicional
-   * si está configurado en BD y no ha sido ya agregado manualmente.
+   * Incluye el RUC del proveedor del sistema una sola vez en infoAdicional.
    */
   async injectProveedorRucInfoAdicional(
     infoAdicional: { nombre: string; valor: string }[],
   ): Promise<{ nombre: string; valor: string }[]> {
     const ruc = await this.getProveedorRuc();
-    if (!ruc) {
+    if (!ruc || infoAdicional.some((item) => item.nombre === 'RUCProveedorSistema')) {
       return infoAdicional;
     }
-    const yaExiste = infoAdicional.some(
-      (c) => c.nombre === 'RUCProveedorSistema',
-    );
-    if (yaExiste) {
-      return infoAdicional;
-    }
-    return [...infoAdicional, { nombre: 'RUCProveedorSistema', valor: ruc }];
+
+    return [
+      ...infoAdicional,
+      { nombre: 'RUCProveedorSistema', valor: ruc },
+    ];
   }
 }

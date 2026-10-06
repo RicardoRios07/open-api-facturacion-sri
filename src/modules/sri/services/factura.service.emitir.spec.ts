@@ -152,6 +152,7 @@ describe('FacturaService — Emisión', () => {
           provide: SriBaseService,
           useValue: {
             validarIdentificacion: jest.fn(),
+            injectProveedorRucInfoAdicional: jest.fn().mockImplementation(async (info) => info),
             validarTipoIdentificacionCatalogo: jest.fn().mockResolvedValue(undefined),
             validarImpuestosDetalles: jest.fn().mockResolvedValue(undefined),
             validarFormasPagoCatalogo: jest.fn().mockResolvedValue(undefined),
@@ -433,21 +434,22 @@ describe('FacturaService — Emisión', () => {
   // ==========================================
   // U-FAC-16: generarXmlPreview sin secuencial
   // ==========================================
-  it('U-FAC-16: generarXmlPreview sin secuencial → lanza BadRequestException', () => {
+  it('U-FAC-16: generarXmlPreview sin secuencial → lanza BadRequestException', async () => {
     const dto = createValidDto();
     delete dto.secuencial;
 
-    expect(() => service.generarXmlPreview(dto)).toThrow(BadRequestException);
+    // generarXmlPreview es async desde main (buildFacturaFromDto async)
+    await expect(service.generarXmlPreview(dto)).rejects.toThrow(BadRequestException);
   });
 
   // ==========================================
   // U-FAC-17: generarXmlPreview con secuencial válido
   // ==========================================
-  it('U-FAC-17: generarXmlPreview genera XML correctamente', () => {
+  it('U-FAC-17: generarXmlPreview genera XML correctamente', async () => {
     const dto = createValidDto();
     dto.secuencial = '000000001';
 
-    const xml = service.generarXmlPreview(dto);
+    const xml = await service.generarXmlPreview(dto);
 
     expect(xml).toBeDefined();
     expect(xmlBuilderService.buildFactura).toHaveBeenCalled();

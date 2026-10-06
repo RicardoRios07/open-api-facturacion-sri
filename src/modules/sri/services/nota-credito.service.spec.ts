@@ -151,6 +151,7 @@ describe('NotaCreditoService — Emisión', () => {
           provide: SriBaseService,
           useValue: {
             validarIdentificacion: jest.fn(),
+            injectProveedorRucInfoAdicional: jest.fn().mockImplementation(async (info) => info),
             validarTipoIdentificacionCatalogo: jest.fn().mockResolvedValue(undefined),
             validarImpuestosDetalles: jest.fn().mockResolvedValue(undefined),
             validarFormasPagoCatalogo: jest.fn().mockResolvedValue(undefined),

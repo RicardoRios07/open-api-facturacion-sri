@@ -43,7 +43,7 @@ export class EmisoresService {
    */
   private toAmbienteCodigo(ambiente: string): string {
     const map: Record<string, string> = {
-      pruebas:    '1',
+      pruebas: '1',
       produccion: '2',
       '1': '1',
       '2': '2',
@@ -72,7 +72,9 @@ export class EmisoresService {
     return estado.toUpperCase();
   }
 
-  async findAll(query: QueryEmisoresDto): Promise<PaginatedEmisoresResponseDto> {
+  async findAll(
+    query: QueryEmisoresDto,
+  ): Promise<PaginatedEmisoresResponseDto> {
     const limit = query.limit ?? 20;
     const cursor = query.cursor;
 
@@ -91,7 +93,9 @@ export class EmisoresService {
       conditions.push(`id > $${params.push(cursor)}`);
     }
 
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
 
     const result = await this.db.query(
       `SELECT ${EmisoresService.EMISOR_COLUMNS}
@@ -116,7 +120,10 @@ export class EmisoresService {
   /**
    * FIX P3: Listar emisores filtrados por tenant — previene data leakage
    */
-  async findAllByTenant(tenantId: string, query: QueryEmisoresDto): Promise<PaginatedEmisoresResponseDto> {
+  async findAllByTenant(
+    tenantId: string,
+    query: QueryEmisoresDto,
+  ): Promise<PaginatedEmisoresResponseDto> {
     const limit = query.limit ?? 20;
     const cursor = query.cursor;
 
@@ -153,7 +160,6 @@ export class EmisoresService {
     };
   }
 
-
   /**
    * FIX P3: Acceso seguro a un emisor — verifica que pertenece al tenant del usuario
    */
@@ -164,12 +170,14 @@ export class EmisoresService {
     const emisor = await this.findOne(id);
 
     // SUPERADMIN puede ver cualquier emisor
-    if (user.rol === UserRole.SUPERADMIN) {
+    if (user.rol === UserRole.SUPERADMIN && !user.tenantId) {
       return emisor;
     }
 
-    // Verificar que el emisor pertenece al tenant del usuario
-    if (!emisor.tenantId || emisor.tenantId !== user.tenantId) {
+    // Un token tenant-scoped solo puede acceder a emisores de su tenant.
+    // También se rechaza tenant_id NULL para evitar mezclar emisores globales
+    // con los datos de un negocio registrado.
+    if (user.tenantId && emisor.tenantId !== user.tenantId) {
       throw new ForbiddenException('No tienes acceso a este emisor');
     }
 
@@ -202,7 +210,7 @@ export class EmisoresService {
   ): Promise<EmisorResponseDto> {
     const emisor = await this.findOne(emisorId);
 
-    if (user.rol === UserRole.SUPERADMIN) {
+    if (user.rol === UserRole.SUPERADMIN && !user.tenantId) {
       return emisor;
     }
 
@@ -234,7 +242,7 @@ export class EmisoresService {
       throw new NotFoundException(`Emisor con RUC ${ruc} no encontrado`);
     }
 
-    if (user.rol === UserRole.SUPERADMIN) {
+    if (user.rol === UserRole.SUPERADMIN && !user.tenantId) {
       return emisor;
     }
 
@@ -278,13 +286,19 @@ export class EmisoresService {
       [tenantId],
     );
 
-    return result.rows.map((row: Record<string, unknown>) => this.mapToResponse(row));
+    return result.rows.map((row: Record<string, unknown>) =>
+      this.mapToResponse(row),
+    );
   }
 
   async create(dto: CreateEmisorDto): Promise<EmisorResponseDto> {
-    // Verificar si ya existe
+    // POST es idempotente dentro del tenant: si el mismo emisor ya existe,
+    // devolverlo en lugar de provocar un falso error de duplicado.
     const existing = await this.findByRuc(dto.ruc);
     if (existing) {
+      if (dto.tenantId && existing.tenantId === dto.tenantId) {
+        return existing;
+      }
       throw new BadRequestException(`Ya existe un emisor con RUC ${dto.ruc}`);
     }
 
@@ -368,7 +382,9 @@ export class EmisoresService {
     }
 
     if (updates.length === 0) {
-      return this.findOne(id);
+      throw new BadRequestException(
+        'Debe enviar al menos un campo válido para actualizar el emisor',
+      );
     }
 
     updates.push(`updated_at = NOW()`);
@@ -422,7 +438,10 @@ export class EmisoresService {
       certificateInfo = this.extractCertificateInfo(file, password);
     } catch (error: unknown) {
       // Tipado correcto de error en catch
-      const msg = error instanceof Error ? error.message : 'Error desconocido al procesar el certificado';
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Error desconocido al procesar el certificado';
       throw new BadRequestException(`Error al procesar el certificado: ${msg}`);
     }
 
@@ -430,8 +449,7 @@ export class EmisoresService {
     await this.db.query(
       `UPDATE emisores SET
         certificado_p12 = $1,
-        certificado_password_encrypted = $2,
-        certificado_password = NULL,
+        certificado_password = $2,
         certificado_valido_hasta = $3,
         certificado_sujeto = $4,
         certificado_updated_at = NOW(),
@@ -459,7 +477,6 @@ export class EmisoresService {
       `UPDATE emisores SET
         certificado_p12 = NULL,
         certificado_password = NULL,
-        certificado_password_encrypted = NULL,
         certificado_valido_hasta = NULL,
         certificado_sujeto = NULL,
         certificado_updated_at = NULL,
@@ -515,7 +532,9 @@ export class EmisoresService {
       estado: row.estado as string,
       tenantId: row.tenant_id as string | undefined,
       tieneCertificado: row.tiene_certificado as boolean,
-      certificadoValidoHasta: (row.certificado_valido_hasta as Date)?.toISOString(),
+      certificadoValidoHasta: (
+        row.certificado_valido_hasta as Date
+      )?.toISOString(),
       certificadoSujeto: row.certificado_sujeto as string | undefined,
       createdAt: (row.created_at as Date)?.toISOString(),
       updatedAt: (row.updated_at as Date)?.toISOString(),
