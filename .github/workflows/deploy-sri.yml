@@ -1,0 +1,135 @@
+name: Deploy SRI
+
+# CI/CD del SRI API. Staging = Coolify Service en chamba-lab (compose),
+# prod = Coolify Application en netcup (build desde git).
+# Las migraciones son SQL idempotentes (IF NOT EXISTS): staging se aplican
+# solas, prod solo manual (workflow_dispatch) por seguridad.
+on:
+  push:
+    branches: [deploy/chamba-staging, main]
+    paths:
+      - 'src/**'
+      - 'database/**'
+      - 'Dockerfile'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-sri.yml'
+  workflow_dispatch:
+    inputs:
+      migrate_prod:
+        description: 'Aplicar database/migrations/*.sql en db_sri PROD (netcup)'
+        required: false
+        default: 'false'
+
+jobs:
+  guard-migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exigir SQL idempotente
+        run: |
+          BASE="${{ github.event.before }}"
+          [ "$BASE" = "0000000000000000000000000000000000000000" ] && BASE="HEAD~1"
+          NEW_SQL=$(git diff --name-only --diff-filter=A "$BASE" "${{ github.sha }}" -- 'database/migrations/*.sql' || true)
+          for f in $NEW_SQL; do
+            grep -q "IF NOT EXISTS" "$f" || { echo "::error::$f sin IF NOT EXISTS (debe ser idempotente)"; exit 1; }
+          done
+          echo "Migraciones OK: ${NEW_SQL:-sin cambios}"
+
+  migrate-staging:
+    needs: guard-migrations
+    if: github.ref_name == 'deploy/chamba-staging'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Join tailnet (staging)
+        uses: tailscale/github-action@v4.1.3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          tags: tag:ci
+          ping: 100.109.151.107
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SRI_DEPLOY_SSH_KEY }}
+      - name: Aplicar migraciones en db_sri staging
+        run: |
+          for f in database/migrations/*.sql; do
+            echo "== $f"
+            ssh -o StrictHostKeyChecking=no root@100.109.151.107 \
+              "docker exec -i vendi-postgres-staging psql -U neondb_owner -d db_sri" < "$f"
+          done
+
+  deploy-staging:
+    needs: migrate-staging
+    if: github.ref_name == 'deploy/chamba-staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Join tailnet (staging)
+        uses: tailscale/github-action@v4.1.3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          tags: tag:ci
+          ping: 100.109.151.107
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SRI_DEPLOY_SSH_KEY }}
+      - name: Pull + recreate sri-api (Coolify Service)
+        run: |
+          ssh -o StrictHostKeyChecking=no root@100.109.151.107 \
+            "cd /data/coolify/services/vzc6m5ktsco581bfscgki1gt && docker compose pull sri-api && docker compose up -d sri-api"
+      - name: Health check
+        run: |
+          for i in $(seq 1 12); do
+            CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 10 -X POST http://sri-api.100.109.151.107.sslip.io/internal/integrations/vendi/tenant-bindings || true)
+            [ "$CODE" = "401" ] && { echo "staging OK (binding endpoint vivo)"; exit 0; }
+            echo "intento $i: $CODE, esperando..."; sleep 10
+          done
+          echo "::error::staging sri-api no responde"; exit 1
+
+  deploy-prod:
+    needs: guard-migrations
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy sri-api (production)
+        run: |
+          curl -fsS --retry 3 --retry-all-errors --max-time 90 -X POST \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_API_TOKEN }}" \
+            "https://coolify-api.vendi.ec/api/v1/deploy?uuid=ype2w8f78sgsvngmezzorska&force=true"
+      - name: Health check
+        run: |
+          for i in $(seq 1 12); do
+            CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 10 -X POST https://sri-api.vendi.ec/internal/integrations/vendi/tenant-bindings || true)
+            [ "$CODE" = "401" ] && { echo "prod OK (binding endpoint vivo)"; exit 0; }
+            echo "intento $i: $CODE, esperando..."; sleep 10
+          done
+          echo "::error::prod sri-api no responde"; exit 1
+
+  migrate-prod:
+    # Manual y explícito. Requiere TAILSCALE_AUTH_KEY_PROD (tailnet con netcup)
+    # porque chamba-lab y netcup viven en tailnets distintos sin ruta entre sí.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.migrate_prod == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Join tailnet (prod)
+        uses: tailscale/github-action@v4.1.3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY_PROD }}
+          tags: tag:ci
+          ping: 100.78.253.52
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SRI_DEPLOY_SSH_KEY }}
+      - name: Aplicar migraciones en db_sri PROD (manual)
+        run: |
+          for f in database/migrations/*.sql; do
+            echo "== $f"
+            ssh -o StrictHostKeyChecking=no root@100.78.253.52 \
+              "docker exec -i vendi-postgres-prod psql -U neondb_owner -d db_sri" < "$f"
+          done
