@@ -8,10 +8,16 @@ import {
   IsNumber,
   Min,
   IsNotEmpty,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { EmisorDto, CompradorDto, PagoDto, CampoAdicionalDto } from './common.dto';
+import {
+  EmisorDto,
+  CompradorDto,
+  PagoDto,
+  CampoAdicionalDto,
+} from './common.dto';
 import { Ambiente, TipoEmision } from '../constants';
 
 export class NotaVentaDetalleDto {
@@ -53,6 +59,27 @@ export class NotaVentaDetalleDto {
 }
 
 export class CreateNotaVentaDto {
+  @ApiPropertyOptional({
+    description:
+      'Referencia estable del pedido en el sistema emisor para evitar duplicados',
+    maxLength: 100,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  @Matches(/^[a-zA-Z0-9._:-]+$/)
+  idReferenciaExterna?: string;
+
+  @ApiPropertyOptional({
+    description: 'Sistema que origina la referencia externa, por ejemplo vendi',
+    maxLength: 50,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  @Matches(/^[a-zA-Z0-9._-]+$/)
+  tipoSistemaExterno?: string;
+
   @ApiPropertyOptional({
     description: 'Ambiente de emisión',
     enum: Ambiente,

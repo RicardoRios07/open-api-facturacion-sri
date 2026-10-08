@@ -115,6 +115,15 @@ export class FacturaService {
         secuencial,
         tipoEmision,
       });
+      if (dto.idReferenciaExterna && dto.tipoSistemaExterno) {
+        await this.repository.guardarClaveAccesoIdempotente({
+          emisorRuc: dto.emisor.ruc,
+          tipoComprobante: 'FACTURA',
+          tipoSistemaExterno: dto.tipoSistemaExterno,
+          idReferenciaExterna: dto.idReferenciaExterna,
+          claveAcceso,
+        });
+      }
 
       const factura = this.buildFacturaFromDto(
         dto,
@@ -379,6 +388,8 @@ export class FacturaService {
           receptor_email: dto.comprador.email,
           receptor_telefono: dto.comprador.telefono,
           guia_remision: dto.guiaRemision,
+          id_referencia_externa: dto.idReferenciaExterna,
+          tipo_sistema_externo: dto.tipoSistemaExterno,
         },
         client,
       );

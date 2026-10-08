@@ -300,6 +300,29 @@ export class SriRepositoryService {
     );
   }
 
+  async guardarClaveAccesoIdempotente(input: {
+    emisorRuc: string;
+    tipoComprobante: 'FACTURA' | 'NOTA_VENTA';
+    tipoSistemaExterno: string;
+    idReferenciaExterna: string;
+    claveAcceso: string;
+  }): Promise<void> {
+    await this.db.query(
+      `UPDATE sri_emision_idempotencia
+          SET clave_acceso = $5, updated_at = NOW()
+        WHERE emisor_ruc = $1 AND tipo_comprobante = $2
+          AND tipo_sistema_externo = $3 AND id_referencia_externa = $4
+          AND estado IN ('EN_COLA', 'PROCESANDO')`,
+      [
+        input.emisorRuc,
+        input.tipoComprobante,
+        input.tipoSistemaExterno,
+        input.idReferenciaExterna,
+        input.claveAcceso,
+      ],
+    );
+  }
+
   // ==========================================
   // DETALLES METHODS
   // ==========================================

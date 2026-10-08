@@ -3,12 +3,22 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SriService } from './sri.service';
-import { SriSoapClient, FacturaService, NotaVentaService, NotaCreditoService, NotaDebitoService, RetencionService, GuiaRemisionService, XmlBuilderService } from './services';
+import {
+  SriSoapClient,
+  FacturaService,
+  NotaVentaService,
+  NotaCreditoService,
+  NotaDebitoService,
+  RetencionService,
+  GuiaRemisionService,
+  XmlBuilderService,
+} from './services';
 import { SriRepositoryService } from './services/sri-repository.service';
 import { XmlStorageService } from './services/xml-storage.service';
 import { CreateFacturaDto } from './dto';
 import { TipoIdentificacion, FormaPago } from './constants';
 import { DatabaseService } from '../../database';
+import { createHash } from 'crypto';
 
 /**
  * Tests unitarios para SriService.emitirFactura
@@ -19,6 +29,7 @@ describe('SriService — Emisión Factura', () => {
   let facturaService: jest.Mocked<FacturaService>;
   let emisionQueue: { add: jest.Mock; getJob: jest.Mock };
   let configService: jest.Mocked<ConfigService>;
+  let database: { query: jest.Mock; queryOne: jest.Mock };
 
   function createValidDto(): CreateFacturaDto {
     return {
@@ -43,26 +54,50 @@ describe('SriService — Emisión Factura', () => {
           cantidad: 2,
           precioUnitario: 100,
           descuento: 0,
-          impuestos: [{ codigo: '2', codigoPorcentaje: '2', tarifa: 12, baseImponible: 200, valor: 24 }],
+          impuestos: [
+            {
+              codigo: '2',
+              codigoPorcentaje: '2',
+              tarifa: 12,
+              baseImponible: 200,
+              valor: 24,
+            },
+          ],
         },
       ],
-      pagos: [{ formaPago: FormaPago.SIN_UTILIZACION_SISTEMA_FINANCIERO, total: 224 }],
+      pagos: [
+        { formaPago: FormaPago.SIN_UTILIZACION_SISTEMA_FINANCIERO, total: 224 },
+      ],
     } as any as CreateFacturaDto;
   }
 
   beforeEach(async () => {
-    emisionQueue = { add: jest.fn().mockResolvedValue({ id: 'job-123' }), getJob: jest.fn() };
+    emisionQueue = {
+      add: jest.fn().mockResolvedValue({ id: 'job-123' }),
+      getJob: jest.fn(),
+    };
+    database = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      queryOne: jest.fn(),
+    };
 
     const module = await Test.createTestingModule({
       providers: [
         SriService,
         {
           provide: SriSoapClient,
-          useValue: { autorizarComprobante: jest.fn(), enviarYAutorizar: jest.fn(), validarComprobante: jest.fn() },
+          useValue: {
+            autorizarComprobante: jest.fn(),
+            enviarYAutorizar: jest.fn(),
+            validarComprobante: jest.fn(),
+          },
         },
         {
           provide: SriRepositoryService,
-          useValue: { findComprobantes: jest.fn(), findComprobanteByClaveAcceso: jest.fn() },
+          useValue: {
+            findComprobantes: jest.fn(),
+            findComprobanteByClaveAcceso: jest.fn(),
+          },
         },
         {
           provide: XmlStorageService,
@@ -70,7 +105,11 @@ describe('SriService — Emisión Factura', () => {
         },
         {
           provide: FacturaService,
-          useValue: { emitirFactura: jest.fn(), generarXmlPreview: jest.fn(), generarFacturaFirmadaDebug: jest.fn() },
+          useValue: {
+            emitirFactura: jest.fn(),
+            generarXmlPreview: jest.fn(),
+            generarFacturaFirmadaDebug: jest.fn(),
+          },
         },
         { provide: NotaCreditoService, useValue: {} },
         { provide: NotaVentaService, useValue: {} },
@@ -90,7 +129,7 @@ describe('SriService — Emisión Factura', () => {
         },
         { provide: XmlBuilderService, useValue: { parseXml: jest.fn() } },
         { provide: 'BullQueue_sri-emision', useValue: emisionQueue },
-        { provide: DatabaseService, useValue: { query: jest.fn() } },
+        { provide: DatabaseService, useValue: database },
       ],
     }).compile();
 
@@ -107,7 +146,10 @@ describe('SriService — Emisión Factura', () => {
 
     const result = await service.emitirFactura(createValidDto());
 
-    expect(emisionQueue.add).toHaveBeenCalledWith('emision', expect.objectContaining({ tipo: 'FACTURA' }));
+    expect(emisionQueue.add).toHaveBeenCalledWith(
+      'emision',
+      expect.objectContaining({ tipo: 'FACTURA' }),
+    );
     expect(result).toEqual({
       mensaje: 'Factura encolada para emisión asíncrona',
       jobId: 'job-123',
@@ -133,16 +175,186 @@ describe('SriService — Emisión Factura', () => {
 
     const result = await service.emitirFactura(createValidDto());
 
-    expect(facturaService.emitirFactura).toHaveBeenCalledWith(expect.any(Object));
+    expect(facturaService.emitirFactura).toHaveBeenCalledWith(
+      expect.any(Object),
+    );
     expect(emisionQueue.add).not.toHaveBeenCalled();
     expect((result as any).success).toBe(true);
+  });
+
+  it('U-SRI-IDEMP-01: referencia de factura idéntica reutiliza el mismo trabajo', async () => {
+    const dto = {
+      ...createValidDto(),
+      idReferenciaExterna: 'order_123',
+      tipoSistemaExterno: 'vendi',
+    };
+    const { idReferenciaExterna, tipoSistemaExterno, ...payload } = dto;
+    const requestHash = createHash('sha256')
+      .update(stableJsonForTest(payload))
+      .digest('hex');
+    const identityHash = createHash('sha256')
+      .update('0924383631001|FACTURA|vendi|order_123')
+      .digest('hex');
+    const stableJobId = `sri-${identityHash}`;
+    let firstInsert = true;
+    database.query.mockImplementation(
+      async (sql: string, values: unknown[]) => {
+        if (
+          String(sql).includes('INSERT INTO sri_emision_idempotencia') &&
+          firstInsert
+        ) {
+          firstInsert = false;
+          return {
+            rows: [
+              {
+                id: 'request-1',
+                request_hash: values[4],
+                estado: 'RECIBIDA',
+                job_id: null,
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+    );
+    database.queryOne.mockResolvedValue({
+      id: 'request-1',
+      request_hash: requestHash,
+      estado: 'EN_COLA',
+      job_id: stableJobId,
+    });
+
+    const first = await service.emitirFactura(dto);
+    const second = await service.emitirFactura(dto);
+
+    expect(emisionQueue.add).toHaveBeenCalledTimes(1);
+    expect(emisionQueue.add).toHaveBeenCalledWith(
+      'emision',
+      expect.objectContaining({
+        tipo: 'FACTURA',
+        idempotencia: expect.objectContaining({
+          idReferenciaExterna: 'order_123',
+        }),
+      }),
+      { jobId: stableJobId },
+    );
+    expect((first as any).jobId).toBe(stableJobId);
+    expect((second as any).repetida).toBe(true);
+  });
+
+  it('U-SRI-IDEMP-02: rechaza reutilizar referencia externa con payload distinto', async () => {
+    const dto = {
+      ...createValidDto(),
+      idReferenciaExterna: 'order_123',
+      tipoSistemaExterno: 'vendi',
+    };
+    const { idReferenciaExterna, tipoSistemaExterno, ...payload } = dto;
+    const requestHash = createHash('sha256')
+      .update(stableJsonForTest(payload))
+      .digest('hex');
+    database.query.mockResolvedValue({ rows: [] });
+    database.queryOne.mockResolvedValue({
+      id: 'request-1',
+      request_hash: requestHash,
+      estado: 'EN_COLA',
+      job_id: 'sri-existing',
+    });
+
+    await expect(
+      service.emitirFactura({ ...dto, fechaEmision: '08/02/2026' }),
+    ).rejects.toThrow('referencia externa ya existe');
+    expect(emisionQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('U-SRI-IDEMP-03: recupera estado y clave por referencia externa', async () => {
+    const resultJson = {
+      success: true,
+      estado: 'AUTORIZADO',
+      claveAcceso: 'access-key',
+    };
+    database.queryOne.mockResolvedValue({
+      emisor_ruc: '0924383631001',
+      tipo_comprobante: 'NOTA_VENTA',
+      tipo_sistema_externo: 'vendi',
+      id_referencia_externa: 'order_123',
+      job_id: 'sri-job',
+      estado: 'COMPLETADA',
+      clave_acceso: 'access-key',
+      resultado_json: resultJson,
+      error_message: null,
+      created_at: new Date('2026-10-08T00:00:00Z'),
+      updated_at: new Date('2026-10-08T00:01:00Z'),
+    });
+
+    const result = await service.consultarEmisionPorReferencia({
+      emisorRuc: '0924383631001',
+      tipoComprobante: 'NOTA_VENTA',
+      tipoSistemaExterno: 'vendi',
+      idReferenciaExterna: 'order_123',
+    });
+
+    expect(result.estado).toBe('COMPLETADA');
+    expect(result.claveAcceso).toBe('access-key');
+    expect(result.resultado).toEqual(resultJson);
+  });
+
+  it('U-SRI-IDEMP-04: dos solicitudes simultáneas usan el mismo ID BullMQ', async () => {
+    const dto = {
+      ...createValidDto(),
+      idReferenciaExterna: 'order_concurrent',
+      tipoSistemaExterno: 'vendi',
+    };
+    const { idReferenciaExterna, tipoSistemaExterno, ...payload } = dto;
+    const requestHash = createHash('sha256')
+      .update(stableJsonForTest(payload))
+      .digest('hex');
+    const expectedJobId = `sri-${createHash('sha256').update('0924383631001|FACTURA|vendi|order_concurrent').digest('hex')}`;
+    let firstInsert = true;
+    database.query.mockImplementation(
+      async (sql: string, values: unknown[]) => {
+        if (
+          String(sql).includes('INSERT INTO sri_emision_idempotencia') &&
+          firstInsert
+        ) {
+          firstInsert = false;
+          return {
+            rows: [
+              {
+                id: 'request-2',
+                request_hash: values[4],
+                estado: 'RECIBIDA',
+                job_id: null,
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+    );
+    database.queryOne.mockResolvedValue({
+      id: 'request-2',
+      request_hash: requestHash,
+      estado: 'RECIBIDA',
+      job_id: null,
+    });
+
+    await Promise.all([service.emitirFactura(dto), service.emitirFactura(dto)]);
+
+    expect(emisionQueue.add).toHaveBeenCalledTimes(2);
+    expect(emisionQueue.add.mock.calls.map((call) => call[2].jobId)).toEqual([
+      expectedJobId,
+      expectedJobId,
+    ]);
   });
 
   // ==========================================
   // U-SRI-EMI-03: generarXmlPreview delega a FacturaService
   // ==========================================
   it('U-SRI-EMI-03: generarXmlPreview delega a FacturaService', async () => {
-    facturaService.generarXmlPreview.mockResolvedValue('<factura>xml</factura>');
+    facturaService.generarXmlPreview.mockResolvedValue(
+      '<factura>xml</factura>',
+    );
 
     const result = await service.generarXmlPreview(createValidDto());
 
@@ -168,13 +380,28 @@ describe('SriService — Emisión Factura', () => {
   });
 
   it('U-SRI-COLA-01: un trabajo activo se expone como EN_COLA', async () => {
-    emisionQueue.getJob.mockResolvedValue({ data: { dto: { emisor: { ruc: '0924383631001' } } }, getState: jest.fn().mockResolvedValue('active') });
+    emisionQueue.getJob.mockResolvedValue({
+      data: { dto: { emisor: { ruc: '0924383631001' } } },
+      getState: jest.fn().mockResolvedValue('active'),
+    });
 
-    await expect(service.consultarEstadoEmision('job-123')).resolves.toEqual({ jobId: 'job-123', queueState: 'active', estado: 'EN_COLA', emisorRuc: '0924383631001' });
+    await expect(service.consultarEstadoEmision('job-123')).resolves.toEqual({
+      jobId: 'job-123',
+      queueState: 'active',
+      estado: 'EN_COLA',
+      emisorRuc: '0924383631001',
+    });
   });
 
   it('U-SRI-COLA-02: un trabajo completado entrega solo estado y clave', async () => {
-    emisionQueue.getJob.mockResolvedValue({ data: { dto: { emisor: { ruc: '0924383631001' } } }, getState: jest.fn().mockResolvedValue('completed'), returnvalue: { estado: 'AUTORIZADO', claveAcceso: '0702202601092438363100110010010000000161245294013' } });
+    emisionQueue.getJob.mockResolvedValue({
+      data: { dto: { emisor: { ruc: '0924383631001' } } },
+      getState: jest.fn().mockResolvedValue('completed'),
+      returnvalue: {
+        estado: 'AUTORIZADO',
+        claveAcceso: '0702202601092438363100110010010000000161245294013',
+      },
+    });
 
     const result = await service.consultarEstadoEmision('job-123');
     expect(result.estado).toBe('AUTORIZADO');
@@ -182,7 +409,11 @@ describe('SriService — Emisión Factura', () => {
   });
 
   it('U-SRI-COLA-03: un trabajo fallido limita el error expuesto', async () => {
-    emisionQueue.getJob.mockResolvedValue({ data: { dto: { emisor: { ruc: '0924383631001' } } }, getState: jest.fn().mockResolvedValue('failed'), failedReason: 'x'.repeat(350) });
+    emisionQueue.getJob.mockResolvedValue({
+      data: { dto: { emisor: { ruc: '0924383631001' } } },
+      getState: jest.fn().mockResolvedValue('failed'),
+      failedReason: 'x'.repeat(350),
+    });
 
     const result = await service.consultarEstadoEmision('job-123');
     expect(result.estado).toBe('FALLIDO');
@@ -190,8 +421,25 @@ describe('SriService — Emisión Factura', () => {
   });
 
   it('U-SRI-COLA-04: rechaza identificadores inválidos y trabajos inexistentes', async () => {
-    await expect(service.consultarEstadoEmision('../secret')).rejects.toThrow(BadRequestException);
+    await expect(service.consultarEstadoEmision('../secret')).rejects.toThrow(
+      BadRequestException,
+    );
     emisionQueue.getJob.mockResolvedValue(null);
-    await expect(service.consultarEstadoEmision('job-404')).rejects.toThrow(NotFoundException);
+    await expect(service.consultarEstadoEmision('job-404')).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });
+
+function stableJsonForTest(value: unknown): string {
+  if (Array.isArray(value))
+    return `[${value.map(stableJsonForTest).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJsonForTest(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}

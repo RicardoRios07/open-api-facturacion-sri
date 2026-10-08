@@ -1,4 +1,11 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { createHash } from 'crypto';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { extractRucFromClaveAcceso } from './utils/clave-acceso.utils';
@@ -32,6 +39,7 @@ import {
   EmisionEncoladaResponseDto,
 } from './dto';
 import { TIPO_COMPROBANTE_DESCRIPCIONES } from './constants';
+import { DatabaseService } from '../../database';
 
 @Injectable()
 export class SriService {
@@ -51,6 +59,7 @@ export class SriService {
     private readonly configService: ConfigService,
     private readonly xmlBuilder: XmlBuilderService,
     @InjectQueue('sri-emision') private readonly emisionQueue: Queue,
+    private readonly db: DatabaseService,
   ) {}
 
   // ==========================================
@@ -60,6 +69,9 @@ export class SriService {
   async emitirFactura(
     dto: CreateFacturaDto,
   ): Promise<EmisionEncoladaResponseDto | FacturaResponseDto> {
+    if (dto.idReferenciaExterna || dto.tipoSistemaExterno) {
+      return this.encolarEmisionIdempotente('FACTURA', dto);
+    }
     const isAsync =
       this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
     if (!isAsync) {
@@ -106,9 +118,13 @@ export class SriService {
       return {
         jobId,
         queueState,
-        estado: typeof result.estado === 'string' ? result.estado : 'COMPLETADO',
+        estado:
+          typeof result.estado === 'string' ? result.estado : 'COMPLETADO',
         emisorRuc,
-        claveAcceso: typeof result.claveAcceso === 'string' ? result.claveAcceso : undefined,
+        claveAcceso:
+          typeof result.claveAcceso === 'string'
+            ? result.claveAcceso
+            : undefined,
       };
     }
     if (queueState === 'failed') {
@@ -117,10 +133,247 @@ export class SriService {
         queueState,
         estado: 'FALLIDO',
         emisorRuc,
-        error: job.failedReason?.slice(0, 300) || 'La emisión no se pudo completar',
+        error:
+          job.failedReason?.slice(0, 300) || 'La emisión no se pudo completar',
       };
     }
     return { jobId, queueState, estado: 'EN_COLA', emisorRuc };
+  }
+
+  async consultarEmisionPorReferencia(input: {
+    emisorRuc: string;
+    tipoComprobante: 'FACTURA' | 'NOTA_VENTA';
+    tipoSistemaExterno: string;
+    idReferenciaExterna: string;
+  }): Promise<Record<string, unknown>> {
+    const request = await this.db.queryOne<{
+      emisor_ruc: string;
+      tipo_comprobante: string;
+      tipo_sistema_externo: string;
+      id_referencia_externa: string;
+      job_id: string | null;
+      estado: string;
+      clave_acceso: string | null;
+      resultado_json: Record<string, unknown> | null;
+      error_message: string | null;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `SELECT emisor_ruc, tipo_comprobante, tipo_sistema_externo,
+              id_referencia_externa, job_id, estado, clave_acceso,
+              resultado_json, error_message, created_at, updated_at
+         FROM sri_emision_idempotencia
+        WHERE emisor_ruc = $1 AND tipo_comprobante = $2
+          AND tipo_sistema_externo = $3 AND id_referencia_externa = $4`,
+      [
+        input.emisorRuc,
+        input.tipoComprobante,
+        input.tipoSistemaExterno,
+        input.idReferenciaExterna,
+      ],
+    );
+    if (!request)
+      throw new NotFoundException('Solicitud de emisión no encontrada');
+
+    if (request.estado !== 'COMPLETADA') {
+      const sriType = input.tipoComprobante === 'FACTURA' ? '01' : '02';
+      const document = await this.db.queryOne<{
+        clave_acceso: string;
+        estado: string;
+        estado_sri: string | null;
+        fecha_autorizacion: Date | null;
+        numero_autorizacion: string | null;
+      }>(
+        `SELECT c.clave_acceso, c.estado, c.estado_sri,
+                c.fecha_autorizacion, c.numero_autorizacion
+           FROM comprobantes c
+           JOIN emisores e ON e.id = c.emisor_id
+          WHERE e.ruc = $1 AND c.tipo_comprobante = $2
+            AND c.tipo_sistema_externo = $3 AND c.id_referencia_externa = $4
+          ORDER BY c.created_at DESC LIMIT 1`,
+        [
+          input.emisorRuc,
+          sriType,
+          input.tipoSistemaExterno,
+          input.idReferenciaExterna,
+        ],
+      );
+      if (document) {
+        const documentStatus = document.estado_sri ?? document.estado;
+        const requestStatus = ['PENDIENTE', 'EN_PROCESO'].includes(
+          documentStatus,
+        )
+          ? 'REQUIERE_REVISION'
+          : 'COMPLETADA';
+        const resolved = {
+          success: documentStatus === 'AUTORIZADO',
+          estado: documentStatus,
+          claveAcceso: document.clave_acceso,
+          fechaAutorizacion: document.fecha_autorizacion,
+          numeroAutorizacion: document.numero_autorizacion,
+        };
+        await this.db.query(
+          `UPDATE sri_emision_idempotencia
+              SET estado = $5, clave_acceso = $6,
+                  resultado_json = $7::jsonb, error_message = NULL, updated_at = NOW()
+            WHERE emisor_ruc = $1 AND tipo_comprobante = $2
+              AND tipo_sistema_externo = $3 AND id_referencia_externa = $4`,
+          [
+            input.emisorRuc,
+            input.tipoComprobante,
+            input.tipoSistemaExterno,
+            input.idReferenciaExterna,
+            requestStatus,
+            document.clave_acceso,
+            JSON.stringify(resolved),
+          ],
+        );
+        return {
+          emisorRuc: input.emisorRuc,
+          tipoComprobante: input.tipoComprobante,
+          tipoSistemaExterno: input.tipoSistemaExterno,
+          idReferenciaExterna: input.idReferenciaExterna,
+          jobId: request.job_id,
+          estado: requestStatus,
+          claveAcceso: document.clave_acceso,
+          resultado: resolved,
+          createdAt: request.created_at,
+          updatedAt: request.updated_at,
+        };
+      }
+    }
+
+    return {
+      emisorRuc: request.emisor_ruc,
+      tipoComprobante: request.tipo_comprobante,
+      tipoSistemaExterno: request.tipo_sistema_externo,
+      idReferenciaExterna: request.id_referencia_externa,
+      jobId: request.job_id,
+      estado: request.estado,
+      claveAcceso: request.clave_acceso,
+      resultado: request.resultado_json,
+      error: request.error_message,
+      createdAt: request.created_at,
+      updatedAt: request.updated_at,
+    };
+  }
+
+  private async encolarEmisionIdempotente(
+    tipo: 'FACTURA' | 'NOTA_VENTA',
+    dto: (CreateFacturaDto | CreateNotaVentaDto) & {
+      idReferenciaExterna?: string;
+      tipoSistemaExterno?: string;
+    },
+  ): Promise<EmisionEncoladaResponseDto> {
+    if (!dto.idReferenciaExterna || !dto.tipoSistemaExterno) {
+      throw new BadRequestException(
+        'idReferenciaExterna y tipoSistemaExterno deben enviarse juntos',
+      );
+    }
+
+    const { idReferenciaExterna, tipoSistemaExterno, ...payload } = dto;
+    const requestHash = createHash('sha256')
+      .update(this.stableJson(payload))
+      .digest('hex');
+    const identity = {
+      emisorRuc: dto.emisor.ruc,
+      tipoComprobante: tipo,
+      tipoSistemaExterno,
+      idReferenciaExterna,
+    };
+
+    const inserted = await this.db.query(
+      `INSERT INTO sri_emision_idempotencia
+         (emisor_ruc, tipo_comprobante, tipo_sistema_externo,
+          id_referencia_externa, request_hash)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (emisor_ruc, tipo_comprobante, tipo_sistema_externo, id_referencia_externa)
+       DO NOTHING
+       RETURNING id, request_hash, estado, job_id, clave_acceso, resultado_json, error_message`,
+      [
+        identity.emisorRuc,
+        tipo,
+        tipoSistemaExterno,
+        idReferenciaExterna,
+        requestHash,
+      ],
+    );
+    const request =
+      inserted.rows[0] ??
+      (await this.db.queryOne<{
+        id: string;
+        request_hash: string;
+        estado: string;
+        job_id: string | null;
+        clave_acceso: string | null;
+        resultado_json: Record<string, unknown> | null;
+        error_message: string | null;
+      }>(
+        `SELECT id, request_hash, estado, job_id, clave_acceso, resultado_json, error_message
+         FROM sri_emision_idempotencia
+        WHERE emisor_ruc = $1 AND tipo_comprobante = $2
+          AND tipo_sistema_externo = $3 AND id_referencia_externa = $4`,
+        [identity.emisorRuc, tipo, tipoSistemaExterno, idReferenciaExterna],
+      ));
+    if (!request)
+      throw new Error('No se pudo reservar la clave de idempotencia');
+    if (String(request.request_hash).trim() !== requestHash) {
+      throw new ConflictException(
+        'La referencia externa ya existe con un contenido diferente',
+      );
+    }
+
+    if (request.estado !== 'RECIBIDA') {
+      return {
+        mensaje: 'Solicitud idempotente recuperada',
+        ...identity,
+        jobId: request.job_id ?? 'resolved',
+        estado: request.estado,
+        claveAcceso: request.clave_acceso ?? undefined,
+        resultado: request.resultado_json ?? undefined,
+        error: request.error_message ?? undefined,
+        repetida: true,
+      };
+    }
+
+    const stableJobHash = createHash('sha256')
+      .update(
+        `${identity.emisorRuc}|${tipo}|${tipoSistemaExterno}|${idReferenciaExterna}`,
+      )
+      .digest('hex');
+    const jobId = `sri-${stableJobHash}`;
+    await this.emisionQueue.add(
+      'emision',
+      { tipo, dto, idempotencia: identity },
+      { jobId },
+    );
+    await this.db.query(
+      `UPDATE sri_emision_idempotencia
+          SET job_id = $2, estado = 'EN_COLA', updated_at = NOW()
+        WHERE id = $1 AND estado = 'RECIBIDA'`,
+      [request.id, jobId],
+    );
+
+    return {
+      mensaje: `${tipo === 'FACTURA' ? 'Factura' : 'Nota de venta'} encolada para emisión asíncrona`,
+      ...identity,
+      jobId,
+      estado: 'EN_COLA',
+      repetida: false,
+    };
+  }
+
+  private stableJson(value: unknown): string {
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => this.stableJson(item)).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+      const entries = Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b));
+      return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${this.stableJson(item)}`).join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
   }
 
   async generarXmlPreview(dto: CreateFacturaDto): Promise<string> {
@@ -142,6 +395,9 @@ export class SriService {
   async emitirNotaVenta(
     dto: CreateNotaVentaDto,
   ): Promise<EmisionEncoladaResponseDto | NotaVentaResponseDto> {
+    if (dto.idReferenciaExterna || dto.tipoSistemaExterno) {
+      return this.encolarEmisionIdempotente('NOTA_VENTA', dto);
+    }
     const isAsync =
       this.configService.get<string>('SRI_EMISION_ASYNC') !== 'false';
     if (!isAsync) {

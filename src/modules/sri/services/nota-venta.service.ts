@@ -48,7 +48,9 @@ export class NotaVentaService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  async emitirNotaVenta(dto: CreateNotaVentaDto): Promise<NotaVentaResponseDto> {
+  async emitirNotaVenta(
+    dto: CreateNotaVentaDto,
+  ): Promise<NotaVentaResponseDto> {
     this.logger.log('Iniciando emisión de nota de venta electrónica');
 
     try {
@@ -124,6 +126,15 @@ export class NotaVentaService {
         secuencial,
         tipoEmision,
       });
+      if (dto.idReferenciaExterna && dto.tipoSistemaExterno) {
+        await this.repository.guardarClaveAccesoIdempotente({
+          emisorRuc: dto.emisor.ruc,
+          tipoComprobante: 'NOTA_VENTA',
+          tipoSistemaExterno: dto.tipoSistemaExterno,
+          idReferenciaExterna: dto.idReferenciaExterna,
+          claveAcceso,
+        });
+      }
 
       const notaVenta = await this.buildNotaVentaFromDto(
         dto,
@@ -274,22 +285,23 @@ export class NotaVentaService {
       contribuyenteRimpe: dto.emisor.contribuyenteRimpe,
     };
 
-    const pagos = dto.pagos && dto.pagos.length > 0
-      ? dto.pagos.map((p) => ({
-          formaPago: p.formaPago,
-          total: p.total,
-          plazo: p.plazo,
-          unidadTiempo: p.unidadTiempo,
-        }))
-      : [{ formaPago: '01', total: importeTotal }];
+    const pagos =
+      dto.pagos && dto.pagos.length > 0
+        ? dto.pagos.map((p) => ({
+            formaPago: p.formaPago,
+            total: p.total,
+            plazo: p.plazo,
+            unidadTiempo: p.unidadTiempo,
+          }))
+        : [{ formaPago: '01', total: importeTotal }];
 
     const infoNotaVenta: InfoNotaVenta = {
       fechaEmision: dto.fechaEmision,
       dirEstablecimiento: dto.emisor.dirEstablecimiento,
       contribuyenteEspecial: dto.emisor.contribuyenteEspecial,
       obligadoContabilidad: dto.emisor.obligadoContabilidad,
-      tipoIdentificacionComprador: comprador
-        .tipoIdentificacion as InfoNotaVenta['tipoIdentificacionComprador'],
+      tipoIdentificacionComprador:
+        comprador.tipoIdentificacion as InfoNotaVenta['tipoIdentificacionComprador'],
       razonSocialComprador: comprador.razonSocial,
       identificacionComprador: comprador.identificacion,
       totalSinImpuestos,
@@ -378,7 +390,10 @@ export class NotaVentaService {
     });
   }
 
-  private calculateTotales(detalles: DetalleNotaVenta[], propina: number): {
+  private calculateTotales(
+    detalles: DetalleNotaVenta[],
+    propina: number,
+  ): {
     totalSinImpuestos: number;
     totalDescuento: number;
     importeTotal: number;
@@ -444,6 +459,8 @@ export class NotaVentaService {
           receptor_direccion: dto.comprador?.direccion,
           receptor_email: dto.comprador?.email,
           receptor_telefono: dto.comprador?.telefono,
+          id_referencia_externa: dto.idReferenciaExterna,
+          tipo_sistema_externo: dto.tipoSistemaExterno,
         },
         client,
       );
@@ -486,16 +503,18 @@ export class NotaVentaService {
 
       if (notaVenta.infoNotaVenta.totalConImpuestos) {
         await this.repository.createTotales(
-          notaVenta.infoNotaVenta.totalConImpuestos.map((tot: TotalImpuesto) => ({
-            comprobante_id: comprobante.id!,
-            codigo: tot.codigo,
-            codigo_porcentaje: tot.codigoPorcentaje,
-            descuento_adicional: tot.descuentoAdicional,
-            base_imponible: tot.baseImponible,
-            tarifa: tot.tarifa,
-            valor: tot.valor,
-            valor_devolucion_iva: tot.valorDevolucionIva,
-          })),
+          notaVenta.infoNotaVenta.totalConImpuestos.map(
+            (tot: TotalImpuesto) => ({
+              comprobante_id: comprobante.id!,
+              codigo: tot.codigo,
+              codigo_porcentaje: tot.codigoPorcentaje,
+              descuento_adicional: tot.descuentoAdicional,
+              base_imponible: tot.baseImponible,
+              tarifa: tot.tarifa,
+              valor: tot.valor,
+              valor_devolucion_iva: tot.valorDevolucionIva,
+            }),
+          ),
           client,
         );
       }
@@ -546,9 +565,7 @@ export class NotaVentaService {
         );
       }
 
-      this.logger.log(
-        `Nota de venta ${claveAcceso} persistida correctamente`,
-      );
+      this.logger.log(`Nota de venta ${claveAcceso} persistida correctamente`);
     } catch (error) {
       this.logger.error(
         `CRÍTICO: Nota de venta ${claveAcceso} autorizada por SRI pero NO persistida: ${(error as Error).message}`,

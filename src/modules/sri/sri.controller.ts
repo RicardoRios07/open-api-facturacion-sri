@@ -116,8 +116,14 @@ export class SriController {
 
   @Get('colas/emision/:jobId')
   @ApiOperation({ summary: 'Consultar estado de una emisión asíncrona' })
-  @ApiParam({ name: 'jobId', description: 'Identificador BullMQ retornado al encolar la emisión' })
-  @ApiResponse({ status: 200, description: 'Estado actual del trabajo de emisión' })
+  @ApiParam({
+    name: 'jobId',
+    description: 'Identificador BullMQ retornado al encolar la emisión',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Estado actual del trabajo de emisión',
+  })
   @ApiResponse({ status: 404, description: 'Trabajo no encontrado' })
   async consultarEstadoEmision(
     @Param('jobId') jobId: string,
@@ -125,11 +131,54 @@ export class SriController {
   ) {
     const status = await this.sriService.consultarEstadoEmision(jobId);
     if (!status.emisorRuc) {
-      throw new ForbiddenException('No se pudo verificar el emisor de este trabajo');
+      throw new ForbiddenException(
+        'No se pudo verificar el emisor de este trabajo',
+      );
     }
     await this.emisoresService.validateRucAccess(status.emisorRuc, user);
     const { emisorRuc: _emisorRuc, ...safeStatus } = status;
     return safeStatus;
+  }
+
+  @Get(
+    'emitir/solicitudes/:tipoComprobante/:tipoSistemaExterno/:idReferenciaExterna',
+  )
+  @ApiOperation({
+    summary: 'Consultar una emisión por la referencia estable del pedido',
+    description:
+      'Permite recuperar estado y clave de acceso aunque el cliente haya perdido la respuesta del POST.',
+  })
+  @ApiParam({ name: 'tipoComprobante', enum: ['FACTURA', 'NOTA_VENTA'] })
+  @ApiParam({ name: 'tipoSistemaExterno', example: 'vendi' })
+  @ApiParam({ name: 'idReferenciaExterna', example: 'order_01J8ABCDEF' })
+  @ApiQuery({ name: 'emisorRuc', required: true, example: '0924383631001' })
+  async consultarEmisionPorReferencia(
+    @Param('tipoComprobante') tipoComprobante: string,
+    @Param('tipoSistemaExterno') tipoSistemaExterno: string,
+    @Param('idReferenciaExterna') idReferenciaExterna: string,
+    @Query('emisorRuc') emisorRuc: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<Record<string, unknown>> {
+    if (!['FACTURA', 'NOTA_VENTA'].includes(tipoComprobante)) {
+      throw new BadRequestException('Tipo de comprobante inválido');
+    }
+    if (!/^\d{13}$/.test(emisorRuc || '')) {
+      throw new BadRequestException('RUC emisor inválido');
+    }
+    if (
+      !/^[a-zA-Z0-9._-]{1,50}$/.test(tipoSistemaExterno) ||
+      !/^[a-zA-Z0-9._:-]{1,100}$/.test(idReferenciaExterna)
+    ) {
+      throw new BadRequestException('Referencia externa inválida');
+    }
+
+    await this.emisoresService.validateRucAccess(emisorRuc, user);
+    return this.sriService.consultarEmisionPorReferencia({
+      emisorRuc,
+      tipoComprobante: tipoComprobante as 'FACTURA' | 'NOTA_VENTA',
+      tipoSistemaExterno,
+      idReferenciaExterna,
+    });
   }
 
   @Post('emitir/nota-venta')
@@ -380,7 +429,9 @@ export class SriController {
   }> {
     this.logger.log('POST /sri/debug/factura-firmada');
     if (user.rol !== UserRole.SUPERADMIN) {
-      throw new ForbiddenException('Solo SUPERADMIN puede generar XML firmado de depuración');
+      throw new ForbiddenException(
+        'Solo SUPERADMIN puede generar XML firmado de depuración',
+      );
     }
     if (this.configService.get('NODE_ENV') === 'production') {
       throw new ForbiddenException('Endpoint deshabilitado en producción');
